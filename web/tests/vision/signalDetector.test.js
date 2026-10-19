@@ -58,3 +58,24 @@ describe('analyzeFrame', () => {
     expect(analyzeFrame({}).color).toBe('unknown')
   })
 })
+
+describe('연결 영역과 색상 모호성', () => {
+  it('화면 전체 초록 벽을 신호로 인정하지 않는다', () => {
+    expect(analyzeFrame(makeFrame(100, 100, GREEN)).color).toBe('unknown')
+  })
+  it('빨강과 초록 후보가 함께 있으면 추측하지 않는다', () => {
+    const f = makeFrame(100, 100, GRAY, [{ x: 10, y: 10, w: 20, h: 20, rgb: RED }, { x: 60, y: 10, w: 20, h: 20, rgb: GREEN }])
+    expect(analyzeFrame(f).color).toBe('unknown')
+  })
+  it('흩어진 단일 픽셀과 가늘고 긴 선을 제외한다', () => {
+    const blocks = []
+    for (let y = 0; y < 50; y += 8) for (let x = 0; x < 100; x += 8) blocks.push({ x, y, w: 2, h: 2, rgb: GREEN })
+    expect(analyzeFrame(makeFrame(100, 100, GRAY, blocks)).color).toBe('unknown')
+    expect(analyzeFrame(makeFrame(100, 100, GRAY, [{ x: 10, y: 10, w: 80, h: 2, rgb: GREEN }])).color).toBe('unknown')
+  })
+  it('투명 픽셀과 잘린 프레임을 신호로 인정하지 않는다', () => {
+    const f = makeFrame(100, 100, GREEN); for (let i = 3; i < f.data.length; i += 4) f.data[i] = 0
+    expect(analyzeFrame(f).color).toBe('unknown')
+    expect(analyzeFrame({ width: 100, height: 100, data: new Uint8Array(5) }).color).toBe('unknown')
+  })
+})

@@ -11,22 +11,11 @@ function fmtSec(sec) {
   return `${sec.toFixed(1)}초`
 }
 
-/**
- * 입력 소스 패널 (스펙 §2.10):
- * - 영상 배지 CAMERA|MOCK, C-ITS 배지 MOCK (LIVE 미연결 상태를 정직하게 표기)
- * - 카메라 모드에서는 C-ITS가 네트워크(/cits-mock)로 서빙됨을 명시하고
- *   poll 연결 상태(연결됨/끊김)를 함께 표기한다 (스펙 §W1.4).
- * - videoSourceLabel이 주어지면(카메라 모드) "내장 카메라"/"ESP32 스트림"을
- *   영상 배지에 덧붙인다 — vision.sourceMode 계약값(CAMERA)은 그대로 두고
- *   표시 텍스트만 구분한다 (스펙 §W3: "배지 텍스트는 enum과 달라도 됨").
- * - target 4필드 + roiBinding
- * - C-ITS 색/잔여/source age/receive age/seq
- * - Vision 색/score/quality/frame age/frameSeq
- */
+/** 실제 카메라 모드의 API 미연결과 MOCK 시나리오 입력을 구분한다. */
 export default function SourcePanel({ target, cits, vision, ages, citsNetworkState, videoSourceLabel }) {
   const visionSourceMode = vision?.sourceMode ?? 'MOCK'
   const citsSourceMode = cits?.sourceMode ?? 'MOCK'
-  const citsBadgeLabel = citsNetworkState ? `C-ITS: MOCK(네트워크) · ${citsNetworkState}` : `C-ITS: ${citsSourceMode}`
+  const citsBadgeLabel = citsNetworkState ? `C-ITS: ${citsNetworkState} · 실제 잔여시간 없음` : `C-ITS: ${citsSourceMode}`
   const visionBadgeLabel = videoSourceLabel ? `영상: ${visionSourceMode} (${videoSourceLabel})` : `영상: ${visionSourceMode}`
 
   return (
@@ -67,7 +56,7 @@ export default function SourcePanel({ target, cits, vision, ages, citsNetworkSta
             {cits?.available === false && ' (수신 불가)'}
           </span>
           <span className="kv-key">잔여시간</span>
-          <span className="kv-val">{fmtSec(cits?.remainingSec)}</span>
+          <span className="kv-val">{citsNetworkState ? '확인 불가' : fmtSec(cits?.remainingSec)}</span>
           <span className="kv-key">source age</span>
           <span className="kv-val">{fmtMs(ages?.citsSourceAgeMs)}</span>
           <span className="kv-key">receive age</span>

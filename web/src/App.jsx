@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createRuntimeShield } from './safety/runtimeShield.js'
-import { validateCitsObservation } from './safety/contracts.js'
 import { createBaselineEngines } from './safety/baselineAdapter.js'
 import { buildTrace, SCENARIOS, SCENARIO_IDS, TICK_MS } from './experiments/faultScenarios.js'
 import { MESSAGES } from './safety/reasonCodes.js'
-import { createAnnouncer } from './feedback/tts.js'
+import { createAnnouncer, speakMessage } from './feedback/tts.js'
+import EvidencePanel from './ui/EvidencePanel.jsx'
+import { cameraWait, freshConnection } from './demo/evidence.js'
 import { vibrate } from './feedback/haptic.js'
 import CameraView from './ui/CameraView.jsx'
 import SourcePanel from './ui/SourcePanel.jsx'
@@ -33,17 +34,8 @@ const CAMERA_TARGET = Object.freeze({
 const CAMERA_USER = { walkingSpeedMps: 0.6 }
 const CAMERA_CROSSWALK = { lengthM: 10, marginSec: 2 }
 const CITS_TICK_MS = 500 // C-ITS poll 루프는 safety tick과 독립 (스펙 §2.10 "루프 분리")
-const CITS_FETCH_TIMEOUT_MS = 1500
 
-/**
- * 네트워크로 서빙되는 /cits-mock 응답이 없거나(실패/타임아웃) 계약을
- * 위반할 때 사용하는 "수신 불가" cits observation. src/sources/mockCits.js의
- * OUTAGE 시나리오 및 faultScenarios.js가 인코딩하는 것과 같은 모양 —
- * available:false이지만 나머지 필드는 여전히 validateCitsObservation을
- * 통과하는 유효한 값으로 채운다. 이렇게 해야 shield가 INVALID_INPUT이
- * 아니라 CITS_MISSING(citsAvailable 체크 실패)으로 정확히 분류한다
- * (스펙 §W1.3).
- */
+/** 실시간 API 미연결 관측. 실제 카메라 모드에서는 MOCK 신호를 사용하지 않는다. */
 function makeUnavailableCits(seq, nowEpochMs, nowMonoMs) {
   return {
     available: false,
@@ -56,7 +48,7 @@ function makeUnavailableCits(seq, nowEpochMs, nowMonoMs) {
     sourceEpochMs: nowEpochMs,
     receivedAtMonoMs: nowMonoMs,
     seq,
-    sourceMode: 'MOCK',
+    sourceMode: 'LIVE',
   }
 }
 
@@ -97,11 +89,18 @@ export default function App() {
     }
   }, [viewMode])
 
-  // ---- 카메라 모드 영상 입력 소스 (스펙 §W3): 내장 카메라 | ESP32 MJPEG 스트림 ----
+  // ---- 실제 영상 입력: 내장 카메라 | ESP32 인증 JPEG 스냅샷 ----
   const [videoSourceKind, setVideoSourceKind] = useState('ESP32') // 'BUILTIN' | 'ESP32'
   const [espUrl, setEspUrl] = useState('')
   const [espToken, setEspToken] = useState('')
   const [espConnection, setEspConnection] = useState(null)
+  const [cameraStatus, setCameraStatus] = useState(null)
+  const [cameraVision, setCameraVision] = useState(null)
+  const [speech, setSpeech] = useState(null)
+  const latestImageRef = useRef(null)
+  const modeRef = useRef(mode)
+  modeRef.current = mode
+
 
   // 화면에 그릴 최신 tick 스냅샷 (표시 전용 — 판정 로직은 ref 기반으로 독립 루프에서 돈다)
   const [display, setDisplay] = useState({
@@ -134,15 +133,16 @@ export default function App() {
   const shieldRef = useRef(createRuntimeShield())
   const baselineRef = useRef(createBaselineEngines())
 
-  const announcerRef = useRef(createAnnouncer())
+  const announcerRef = useRef(null)
+  if (!announcerRef.current) announcerRef.current = createAnnouncer({ speak: (message) => speakMessage(message, setSpeech) })
   const audioEnabledRef = useRef(audioEnabled)
   audioEnabledRef.current = audioEnabled
   const lastProposedDecisionRef = useRef(null)
   const lastProposedMessageRef = useRef(null)
 
-  // Camera-mode /cits-mock poll 루프 전용 상태 — 실패 시 fallback seq 카운터
+  // 실시간 API 미연결 관측의 순번
   const citsFallbackSeqRef = useRef(0)
-  // 폴 성공/실패 표시용 (SourcePanel 배지: 연결됨/끊김) — 화면 표시 전용이라 state
+  // SourcePanel에 표시하는 실시간 API 미연결 상태
   const [citsConn, setCitsConn] = useState('연결 중')
 
   /** 시나리오/카메라 전환 시 모든 축적 상태를 초기화한다. */
@@ -155,7 +155,14 @@ export default function App() {
     citsRef.current = null
     visionRef.current = null
     citsFallbackSeqRef.current = 0
-    setCitsConn('연결 중')
+    setCitsConn('실시간 API 미연결')
+    latestImageRef.current = null
+    setCameraStatus(null)
+    setCameraVision(null)
+    setSpeech(null)
+    setAudioEnabled(false)
+    audioEnabledRef.current = false
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
   }, [])
 
   useEffect(() => {
@@ -200,47 +207,18 @@ export default function App() {
     return () => clearInterval(id)
   }, [mode, scenarioId])
 
-  // ---- 카메라 모드: 네트워크 /cits-mock 독립 poll 루프 (스펙 §W1.3) ----
-  // safety tick(100ms)과 완전히 분리된 루프 — poll이 실패/중단되어도 safety
-  // tick은 계속 citsRef.current를 평가하고, 그 관측치의 age가 계속 자라
-  // CITS_STALE → WAIT으로 수렴한다(비행기 모드 시연 핵심 장면).
+  // 실제 카메라 모드에는 실시간 API가 없다. 모의 신호/잔여시간을 주입하지 않는다.
   useEffect(() => {
     if (mode !== 'CAMERA') return undefined
-    const myGeneration = generationRef.current
     targetRef.current = CAMERA_TARGET
     userRef.current = CAMERA_USER
     crosswalkRef.current = CAMERA_CROSSWALK
-
-    const pollCits = async () => {
-      if (generationRef.current !== myGeneration) return
-      const ctrl = new AbortController()
-      const timer = setTimeout(() => ctrl.abort(), CITS_FETCH_TIMEOUT_MS)
-      try {
-        const res = await fetch('/cits-mock', { signal: ctrl.signal, cache: 'no-store' })
-        if (generationRef.current !== myGeneration) return // 늦은 응답 폐기 (generation token)
-        if (!res.ok) throw new Error(`cits-mock http ${res.status}`)
-        const server = await res.json()
-        const full = { ...server, receivedAtMonoMs: performance.now() }
-        const check = validateCitsObservation(full)
-        if (!check.ok) throw new Error(`cits-mock contract violation: ${check.errors.join(',')}`)
-        citsRef.current = full
-        setCitsConn('연결됨')
-      } catch {
-        if (generationRef.current !== myGeneration) return
-        citsFallbackSeqRef.current += 1
-        citsRef.current = makeUnavailableCits(
-          citsFallbackSeqRef.current,
-          Date.now(),
-          performance.now()
-        )
-        setCitsConn('끊김')
-      } finally {
-        clearTimeout(timer)
-      }
+    const unavailable = () => {
+      citsRef.current = makeUnavailableCits(++citsFallbackSeqRef.current, Date.now(), performance.now())
+      setCitsConn('실시간 API 미연결')
     }
-
-    pollCits()
-    const id = setInterval(pollCits, CITS_TICK_MS)
+    unavailable()
+    const id = setInterval(unavailable, CITS_TICK_MS)
     return () => clearInterval(id)
   }, [mode])
 
@@ -260,16 +238,21 @@ export default function App() {
 
   // ---- 카메라 모드: CameraView의 vision 콜백을 SafeGraph vision observation으로 매핑 ----
   const onCameraVision = useCallback((v) => {
+    if (modeRef.current !== 'CAMERA') return
+    latestImageRef.current = v.blob ?? null
     visionRef.current = {
       color: v.color,
       score: v.confidence,
       quality: v.quality,
+      frameAvailable: v.frameAvailable,
       roiBindingId: targetRef.current?.roiBindingId ?? CAMERA_TARGET.roiBindingId,
       capturedAtMonoMs: v.capturedAtMonoMs,
       frameSeq: v.frameSeq,
       mediaTimeMs: v.capturedAtMonoMs,
       sourceMode: 'CAMERA',
+      deviceFrameSeq: v.deviceFrameSeq, deviceBootId: v.deviceBootId,
     }
+    setCameraVision(visionRef.current)
   }, [])
 
   // ---- safety tick: 100ms 고정, EVERY tick clock을 새로 만들고 두 엔진을 동시에 구동 ----
@@ -289,7 +272,8 @@ export default function App() {
       const tickInput = { target, cits, vision, user, crosswalk, clock }
 
       const shieldStartMonoMs = performance.now()
-      const shieldOut = shieldRef.current.update(tickInput)
+      const checked = shieldRef.current.update(tickInput)
+      const shieldOut = mode === 'CAMERA' ? cameraWait(checked, vision, clock.nowMonoMs) : checked
       const shieldMs = performance.now() - shieldStartMonoMs
       const rawOut = baselineRef.current.raw.update(tickInput, clock.nowMonoMs)
       const stabilizedOut = baselineRef.current.stabilized.update(tickInput, clock.nowMonoMs)
@@ -314,8 +298,7 @@ export default function App() {
         speechSynthesis.cancel() // WAIT 전환 시 진행 가능 관련 발화를 즉시 취소
       }
       if (audioEnabledRef.current && (decisionChanged || messageChanged)) {
-        announcerRef.current.announce(shieldOut.message, clock.nowMonoMs)
-        announcedMessage = shieldOut.message
+        if (announcerRef.current.announce(shieldOut.message, clock.nowMonoMs)) announcedMessage = shieldOut.message
         const pattern = DECISION_HAPTIC[shieldOut.decision]
         if (pattern) vibrate(pattern)
       }
@@ -345,6 +328,7 @@ export default function App() {
           remainingSec: cits?.remainingSec ?? null,
           seq: cits?.seq ?? null,
           available: cits?.available ?? null,
+          sourceMode: cits?.sourceMode ?? null,
         },
         citsSourceAgeMs: Number.isFinite(shieldOut.ages?.citsSourceAgeMs) ? shieldOut.ages.citsSourceAgeMs : null,
         baseline: {
@@ -353,6 +337,7 @@ export default function App() {
         },
         proposed: { decision: shieldOut.decision, reason: shieldOut.reason },
         tts: announcedMessage,
+        ttsMeaning: '발화 요청만 기록. 실제 청취는 별도 확인',
       })
 
       // 화면 카운터/p95는 매 100ms 재렌더하지 않도록 ~1초 간격으로만 갱신한다.
@@ -364,6 +349,26 @@ export default function App() {
     }, 100)
     return () => clearInterval(id)
   }, [mode, scenarioId])
+
+  const currentMessage = () => mode === 'CAMERA'
+    ? cameraWait(display.shield, visionRef.current, performance.now()).message
+    : display.shield?.message ?? MESSAGES.WAIT
+  const changeAudio = (enabled) => {
+    setAudioEnabled(enabled)
+    audioEnabledRef.current = enabled
+    if (enabled) announcerRef.current.announce(currentMessage(), performance.now(), { force: true })
+    else if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
+  }
+  const replay = () => announcerRef.current.announce(currentMessage(), performance.now(), { force: true })
+  const saveImage = () => {
+    if (mode !== 'CAMERA' || !freshConnection(cameraStatus, Date.now()) || !latestImageRef.current) return
+    const url = URL.createObjectURL(latestImageRef.current)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `clip-${cameraStatus.boot}-${cameraStatus.seq}.jpg`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
 
   return (
     <div className="app">
@@ -387,6 +392,8 @@ export default function App() {
               mode={videoSourceKind === 'ESP32' ? 'esp32' : 'camera'}
               espUrl={espConnection?.url ?? ''}
               espToken={espConnection?.token ?? ''}
+              connectionId={espConnection?.id}
+              onStatus={setCameraStatus}
               onVision={onCameraVision}
             />
           ) : (
@@ -438,11 +445,15 @@ export default function App() {
             <input className="esp32-url-input" type="password" aria-label="ESP32 기기 토큰"
               placeholder="기기 접속 토큰" autoComplete="off" value={espToken}
               onChange={(e) => setEspToken(e.target.value)} />
-            <button onClick={() => setEspConnection({ url: espUrl.trim(), token: espToken })}>ESP32 연결</button>
+            <button onClick={() => setEspConnection({ url: espUrl.trim(), token: espToken, id: Date.now() })}>ESP32 연결</button>
             <p>ESP32와 같은 Wi-Fi의 PC에서 개발 서버로 실행해 주세요. 기기 토큰은 이 탭의 메모리에만 보관됩니다.</p>
           </>)}
         </section>
       )}
+
+      <EvidencePanel liveMode={mode === 'CAMERA'} status={cameraStatus} vision={cameraVision}
+        decision={mode === 'CAMERA' ? cameraWait(display.shield, cameraVision, performance.now()) : display.shield} speech={speech} audioEnabled={audioEnabled}
+        onAudio={() => changeAudio(!audioEnabled)} onReplay={replay} onSaveImage={saveImage} />
 
       <SafetyGatePanel checks={display.shield?.checks} failedChecks={display.shield?.failedChecks} />
 
@@ -458,7 +469,7 @@ export default function App() {
         scenarioId={scenarioId}
         setScenarioId={setScenarioId}
         audioEnabled={audioEnabled}
-        setAudioEnabled={setAudioEnabled}
+        setAudioEnabled={changeAudio}
       />
 
       <section className="view-mode-bar" aria-label="화면 모드">
@@ -486,6 +497,8 @@ export default function App() {
           shieldOut={display.shield}
           citsConnected={mode === 'CAMERA' ? citsConn === '연결됨' : Boolean(display.cits?.available)}
           audioOn={audioEnabled}
+          liveMode={mode === 'CAMERA'}
+          cameraConnected={freshConnection(cameraStatus, Date.now())}
           onExit={() => setViewMode('console')}
         />
       )}

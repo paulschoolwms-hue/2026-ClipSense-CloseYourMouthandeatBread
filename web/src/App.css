@@ -257,3 +257,22 @@ body { margin: 0; background: #0a0d11; color: #f5f7fa; font-family: 'Apple SD Go
 .camera-error { align-content: center; gap: 12px; }
 .cam-pip .camera-result { font-size: 10px; padding: 4px; top: 4px; left: 4px; right: 4px; }
 .cam-pip .camera-controls, .cam-pip .camera-result small { display: none; }
+
+.evidence-panel { margin: 16px 20px; padding: 20px; border: 1px solid #394958; border-radius: 12px; background: #12161c; }
+.evidence-panel h2 { margin-top: 0; }
+.evidence-panel p { line-height: 1.6; overflow-wrap: anywhere; }
+.evidence-warning { color: #ffd600; font-weight: 700; }
+.evidence-status { display: grid; grid-template-columns: minmax(120px, auto) 1fr; gap: 8px 16px; }
+.evidence-status dt { color: #afbdca; }
+.evidence-status dd { margin: 0; overflow-wrap: anywhere; }
+.evidence-actions, .evidence-fields { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0; }
+.evidence-actions button { background: #2962ff; color: #fff; padding: 12px; border: 1px solid #86a7ff; border-radius: 8px; font: inherit; cursor: pointer; }
+.evidence-actions button:disabled { opacity: .45; cursor: default; }
+.evidence-fields label { display: flex; flex-direction: column; gap: 6px; flex: 1 1 220px; }
+.evidence-fields input, .evidence-fields select { background: #1a2028; color: #fff; border: 1px solid #708298; padding: 10px; border-radius: 6px; font: inherit; min-width: 0; }
+.evidence-table { overflow-x: auto; }
+.evidence-table table { width: 100%; border-collapse: collapse; }
+.evidence-table td, .evidence-table th { text-align: left; padding: 8px; border-bottom: 1px solid #394958; }
+.video-source-bar .esp32-url-input { flex: 1 1 240px; min-width: 0; }
+.video-source-bar p { flex-basis: 100%; }
+@media (max-width: 600px) { .evidence-status { grid-template-columns: 1fr; } .evidence-status dd { margin-bottom: 10px; } }

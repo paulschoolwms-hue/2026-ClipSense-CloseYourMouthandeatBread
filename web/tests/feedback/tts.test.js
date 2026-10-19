@@ -30,3 +30,17 @@ describe('announcer', () => {
     expect(speak).not.toHaveBeenCalled()
   })
 })
+
+describe('발화 요청과 청취를 혼동하지 않는다', () => {
+  it('미지원/거부된 발화는 성공 요청으로 처리하지 않는다', () => {
+    const a = createAnnouncer({ speak: () => false })
+    expect(a.announce('대기하세요', 0)).toBe(false)
+  })
+  it('사용자 다시 듣기는 같은 메시지도 즉시 요청한다', () => {
+    const speak = vi.fn()
+    const a = createAnnouncer({ speak })
+    a.announce('대기하세요', 0)
+    expect(a.announce('대기하세요', 1, { force: true })).toBe(true)
+    expect(speak).toHaveBeenCalledTimes(2)
+  })
+})

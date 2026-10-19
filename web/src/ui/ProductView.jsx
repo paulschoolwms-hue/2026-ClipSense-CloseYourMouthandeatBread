@@ -20,7 +20,7 @@ const HAS_VIBRATE = typeof navigator !== 'undefined' && typeof navigator.vibrate
  * 읽어 화면에 옮길 뿐이다. CameraView는 이 컴포넌트 밖(App.jsx)에서 항상
  * 렌더링되며 이 컴포넌트는 그 위에 겹쳐지는 오버레이다.
  */
-export default function ProductView({ shieldOut, citsConnected, audioOn, onExit }) {
+export default function ProductView({ shieldOut, citsConnected, audioOn, onExit, liveMode = false, cameraConnected = false }) {
   const decision = shieldOut?.decision ?? 'WAIT'
   const meta = DECISION_META[decision] ?? DECISION_META.WAIT
   const message = shieldOut?.message ?? ''
@@ -48,10 +48,10 @@ export default function ProductView({ shieldOut, citsConnected, audioOn, onExit 
             C-ITS {citsConnected ? '연결' : '끊김'}
           </span>
           <span className="pv-dot-group" title="카메라 상태">
-            <span className="pv-dot pv-dot-on" />
+            <span className={`pv-dot ${cameraConnected ? 'pv-dot-on' : 'pv-dot-off'}`} />
             카메라
           </span>
-          <span className="pv-badge-mock">MOCK</span>
+          <span className="pv-badge-mock">{liveMode ? '실시간 API 없음 · 대기' : 'MOCK'}</span>
           <span className="pv-badge-verify">기술 검증용</span>
         </div>
       </header>

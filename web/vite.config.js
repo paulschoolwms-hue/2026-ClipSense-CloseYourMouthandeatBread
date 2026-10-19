@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process'
+import { createEsp32Proxy } from './server/esp32Proxy.js'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
@@ -58,67 +60,19 @@ function citsMockPlugin() {
   }
 }
 
-/**
- * dev-only: GET /esp32-proxy?url=http://... — ESP32 MJPEG 스트림을 그대로
- * 파이프하되 Access-Control-Allow-Origin: * 를 붙여 <img crossOrigin>의
- * CORS taint를 dev 환경에서 회피할 수 있게 한다 (스펙 §W3). url은
- * http://로 시작해야만 허용한다(그 외 스킴·상대경로는 400) — 임의
- * 내부망/파일 스킴으로의 SSRF성 프록시를 막기 위함이다.
- */
+/** 맥 로컬 개발 서버에서만 동작하는 인증 JPEG/상태 HTTP 중계. */
 function esp32ProxyPlugin() {
-  return {
-    name: 'clipsense-esp32-proxy',
-    apply: 'serve',
-    configureServer(server) {
-      server.middlewares.use('/esp32-proxy', async (req, res) => {
-        const reqUrl = new URL(req.url ?? '', 'http://internal.local')
-        const target = reqUrl.searchParams.get('url') ?? ''
-        if (!target.startsWith('http://')) {
-          res.statusCode = 400
-          res.setHeader('Content-Type', 'text/plain')
-          res.end('esp32-proxy: url must start with http://')
-          return
-        }
-        try {
-          const token = req.headers['x-clip-device-token']
-          const upstream = await fetch(target, {
-            headers: token ? { 'X-Clip-Device-Token': token } : {},
-            signal: AbortSignal.timeout(5000),
-          })
-          res.statusCode = upstream.status
-          res.setHeader('Access-Control-Allow-Origin', '*')
-          res.setHeader('Cache-Control', 'no-store')
-          for (const name of ['X-Frame-Seq', 'X-Boot-Id', 'X-Capture-Uptime-Us', 'X-Response-Uptime-Us']) {
-            const value = upstream.headers.get(name)
-            if (value != null) res.setHeader(name, value)
-          }
-          const contentType = upstream.headers.get('content-type')
-          if (contentType) res.setHeader('Content-Type', contentType)
-          if (!upstream.body) {
-            res.end()
-            return
-          }
-          const reader = upstream.body.getReader()
-          req.on('close', () => reader.cancel().catch(() => {}))
-          for (;;) {
-            const { done, value } = await reader.read()
-            if (done) break
-            res.write(value)
-          }
-          res.end()
-        } catch {
-          res.statusCode = 502
-          res.setHeader('Content-Type', 'text/plain')
-          res.end('esp32-proxy: upstream fetch failed')
-        }
-      })
-    },
-  }
+  return { name: 'clipsense-esp32-proxy', apply: 'serve',
+    configureServer(server) { server.middlewares.use('/esp32-proxy', createEsp32Proxy()) } }
 }
+
+let revision = 'unknown'
+try { revision = execFileSync('git', ['describe', '--always', '--dirty'], { encoding: 'utf8' }).trim() } catch {}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
+    define: { __APP_REVISION__: JSON.stringify(revision) },
     plugins: [
       react(),
       basicSsl(), // dev HTTPS — 폰에서 getUserMedia는 secure context 필요 (스펙 §W1.1)

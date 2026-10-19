@@ -67,53 +67,57 @@ function computeQuality(frame) {
  * UI 계층이므로 허용 — 안전 코어에는 clock 인자로 전달됨) · `quality`를
  * 추가한다.
  */
-export default function CameraView({ mode, espUrl, espToken, onVision }) {
+export default function CameraView({ mode, espUrl, espToken, connectionId, onVision, onStatus }) {
   const videoRef = useRef(null)
   const imgRef = useRef(null)
   const canvasRef = useRef(document.createElement('canvas'))
   const onVisionRef = useRef(onVision)
+  const onStatusRef = useRef(onStatus)
   onVisionRef.current = onVision
+  onStatusRef.current = onStatus
   const frameSeqRef = useRef(0)
+  const lastFrameAtRef = useRef(-Infinity)
+  const lastVideoTimeRef = useRef(-1)
   const [error, setError] = useState(null)
   const [facing, setFacing] = useState('environment')
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState(null)
   const [ready, setReady] = useState(false)
-  const lastFrameAtRef = useRef(0)
-  const lastVideoTimeRef = useRef(-1)
 
   useEffect(() => {
-    let stream = null
-    let cancelled = false
-    setError(null)
-    setReady(false)
-    setResult(null)
-    lastVideoTimeRef.current = -1
-    lastFrameAtRef.current = 0
-    onVisionRef.current({ color: 'unknown', confidence: 0, quality: 0,
-      frameSeq: ++frameSeqRef.current, capturedAtMonoMs: performance.now() })
+    let stream = null, cancelled = false
+    setError(null); setReady(false); setResult(null)
+    lastVideoTimeRef.current = -1; lastFrameAtRef.current = -Infinity
+    onVisionRef.current({ color: 'unknown', confidence: 0, quality: 0, frameAvailable: false,
+      frameSeq: frameSeqRef.current, capturedAtMonoMs: performance.now() - 5000 })
     if (mode === 'camera') {
+      onStatusRef.current?.({ state: 'connecting', inputKind: 'BUILTIN', successCount: 0, lastSuccessAt: null })
       startCamera(videoRef.current, facing, () => cancelled)
         .then((s) => { if (cancelled) stopStream(s); else { stream = s; setReady(Boolean(s)) } })
-        .catch((e) => { if (!cancelled) setError(cameraErrorMessage(e)) })
+        .catch((e) => { if (!cancelled) {
+          setError(cameraErrorMessage(e))
+          onStatusRef.current?.({ state: 'error', inputKind: 'BUILTIN', error: cameraErrorMessage(e), successCount: 0, lastSuccessAt: null })
+        } })
     }
     return () => { cancelled = true; stopStream(stream) }
   }, [mode, facing, attempt])
 
   useEffect(() => {
     if (mode !== 'esp32') return undefined
-    let cancelled = false
-    let timer
-    let previous = null
-    let objectUrl = null
+    let cancelled = false, timer, previous = null, objectUrl = null, failures = 0
+    let status = { state: espUrl ? 'connecting' : 'idle', inputKind: 'ESP32', successCount: 0, lastSuccessAt: null }
     const controller = new AbortController()
-    setResult(null)
-    setError(null)
+    setResult(null); setError(null)
+    onStatusRef.current?.(status)
+    // 이전 연결의 사진이나 판독을 새 증거로 재사용하지 않는다.
+    onVisionRef.current({ color: 'unknown', confidence: 0, quality: 0, frameAvailable: false,
+      frameSeq: frameSeqRef.current, capturedAtMonoMs: performance.now() - 5000 })
+    if (imgRef.current) imgRef.current.removeAttribute('src')
     if (!espUrl) return undefined
     const poll = async () => {
       try {
         const shot = await fetchSnapshot(espUrl, espToken, previous,
-          AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]))
+          AbortSignal.any([controller.signal, AbortSignal.timeout(6500)]))
         if (cancelled) return
         const nextUrl = URL.createObjectURL(shot.blob)
         if (objectUrl) URL.revokeObjectURL(objectUrl)
@@ -122,67 +126,75 @@ export default function CameraView({ mode, espUrl, espToken, onVision }) {
         image.src = objectUrl
         await image.decode()
         if (cancelled) return
+        if (performance.now() - shot.capturedAtMonoMs > 2000) throw new Error('ESP32 영상이 오래되었습니다.')
         const frame = grabFrame(image, canvasRef.current)
         if (!frame) throw new Error('ESP32 JPEG 영상을 읽을 수 없습니다.')
         previous = shot
+        failures = 0
+        lastFrameAtRef.current = performance.now()
         const base = analyzeFrame(frame)
-        setResult(base)
-        setError(null)
+        setResult(base); setError(null)
+        status = { state: 'connected', inputKind: 'ESP32', successCount: status.successCount + 1,
+          lastSuccessAt: shot.receivedAt, seq: shot.seq, boot: shot.boot, captureUs: shot.captureUs,
+          sensor: shot.sensor, frameSource: shot.frameSource, firmware: shot.firmware,
+          width: image.naturalWidth, height: image.naturalHeight, requestMs: shot.requestMs }
+        onStatusRef.current?.(status)
         onVisionRef.current({ ...base, frameSeq: ++frameSeqRef.current,
-          capturedAtMonoMs: shot.capturedAtMonoMs, quality: computeQuality(frame) })
+          capturedAtMonoMs: shot.capturedAtMonoMs, quality: computeQuality(frame), frameAvailable: true, blob: shot.blob,
+          deviceFrameSeq: shot.seq, deviceBootId: shot.boot })
       } catch (e) {
         if (cancelled) return
-        setResult(null)
-        setError(e.name === 'TimeoutError' ? 'ESP32 응답 시간 초과. 같은 Wi-Fi와 기기 전원을 확인해 주세요.' : e.message)
-        onVisionRef.current({ color: 'unknown', confidence: 0, quality: 0,
-          frameSeq: ++frameSeqRef.current, capturedAtMonoMs: performance.now() })
+        failures++
+        const message = e.name === 'TimeoutError' ? 'ESP32 응답 시간 초과. 같은 Wi-Fi와 기기 IP를 확인하세요.' :
+          e instanceof TypeError ? '맥의 웹 서버에 연결하지 못했습니다. npm run dev 터미널과 Local 주소를 확인하세요.' : e.message
+        setResult(null); setError(message)
+        status = { ...status, state: 'error', error: message }
+        onStatusRef.current?.(status)
+        // 실패는 새 프레임이 아니다. 마지막 성공 시간/기기 seq/성공 횟수를 유지한다.
+        onVisionRef.current({ color: 'unknown', confidence: 0, quality: 0, frameAvailable: false,
+          frameSeq: frameSeqRef.current, capturedAtMonoMs: previous?.capturedAtMonoMs ?? performance.now() - 5000 })
       } finally {
-        if (!cancelled) timer = setTimeout(poll, ANALYZE_MS)
+        if (!cancelled) timer = setTimeout(poll, failures ? Math.min(3000, 500 * 2 ** Math.min(failures, 3)) : ANALYZE_MS)
       }
     }
     poll()
     return () => { cancelled = true; controller.abort(); clearTimeout(timer); if (objectUrl) URL.revokeObjectURL(objectUrl) }
-  }, [mode, espUrl, espToken])
+  }, [mode, espUrl, espToken, connectionId])
 
   useEffect(() => {
     if (mode !== 'camera') return undefined
+    let successCount = 0
     const id = setInterval(() => {
-      const el = mode === 'camera' ? videoRef.current : imgRef.current
-      if (!el) return
-      // A paused video must age out instead of acquiring a fresh timestamp.
-      if (mode === 'camera' && (!ready || el.readyState < 2 ||
-          el.currentTime === lastVideoTimeRef.current)) {
-        if (performance.now() - lastFrameAtRef.current > 1500) setResult(null)
-        return
-      }
+      const el = videoRef.current
+      if (!el || !ready || el.readyState < 2 || el.currentTime === lastVideoTimeRef.current) return
+      lastVideoTimeRef.current = el.currentTime
       const frame = grabFrame(el, canvasRef.current)
-      if (mode === 'camera') lastVideoTimeRef.current = el.currentTime
-      if (frame) lastFrameAtRef.current = performance.now()
-      frameSeqRef.current += 1
-      const base = frame ? analyzeFrame(frame) : { color: 'unknown', confidence: 0 }
-      setResult(frame ? base : null)
-      onVisionRef.current({
-        ...base,
-        frameSeq: frameSeqRef.current,
-        capturedAtMonoMs: performance.now(),
-        quality: computeQuality(frame),
-      })
+      if (!frame) return
+      lastFrameAtRef.current = performance.now()
+      const base = analyzeFrame(frame)
+      setResult(base)
+      onStatusRef.current?.({ state: 'connected', inputKind: 'BUILTIN', successCount: ++successCount,
+        lastSuccessAt: Date.now(), width: el.videoWidth, height: el.videoHeight })
+      onVisionRef.current({ ...base, frameSeq: ++frameSeqRef.current,
+        capturedAtMonoMs: performance.now(), quality: computeQuality(frame), frameAvailable: true })
     }, ANALYZE_MS)
     return () => clearInterval(id)
   }, [mode, ready, facing, attempt])
 
+  useEffect(() => {
+    const id = setInterval(() => { if (performance.now() - lastFrameAtRef.current > 2000) setResult(null) }, 250)
+    return () => clearInterval(id)
+  }, [])
+
   return (
     <div className="camera-view">
-      {mode === 'camera' ? (
-        <video ref={videoRef} muted playsInline autoPlay aria-label="신호등 인식 카메라" />
-      ) : (
-        <img ref={imgRef} alt="ESP32 카메라 영상" />
-      )}
+      {mode === 'camera' ? <video ref={videoRef} muted playsInline autoPlay aria-label="신호등 인식 카메라" /> :
+        <img ref={imgRef} alt="ESP32 카메라 영상" />}
       <div className="region-line" style={{ top: `${REGION_RATIO * 100}%` }} />
       <span className="region-label">↑ 신호등 분석 영역</span>
       <div className={`camera-result camera-result-${result?.color ?? 'unknown'}`} role="status" aria-live="polite">
-        {result?.color === 'red' ? '🔴 빨간 신호 감지' : result?.color === 'green' ? '🟢 초록 신호 감지' : '신호등을 분석 영역에 맞춰 주세요'}
-        {result?.color !== 'unknown' && result && <small>색상 점수 {Math.round(result.confidence * 100)}%</small>}
+        {result?.color === 'red' ? '🔴 빨간 색상 후보' : result?.color === 'green' ? '🟢 초록 색상 후보' : '신호등을 분석 영역에 맞춰 주세요'}
+        {result?.color !== 'unknown' && result && <small>색상 점수 {Math.round(result.confidence * 100)}% · 신호등 확률이 아닙니다</small>}
       </div>
       {mode === 'camera' && <div className="camera-controls">
         <button onClick={() => setFacing((v) => v === 'environment' ? 'user' : 'environment')}>카메라 전환</button>

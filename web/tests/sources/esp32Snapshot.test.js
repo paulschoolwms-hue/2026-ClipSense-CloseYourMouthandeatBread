@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { captureUrl, fetchSnapshot } from '../../src/sources/esp32Snapshot.js'
 afterEach(() => vi.unstubAllGlobals())
 function response(status = 200, headers = {}) {
-  return new Response(new Blob(['jpeg']), { status, headers: {
+  return new Response(new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])]), { status, headers: {
     'Content-Type': 'image/jpeg', 'X-Frame-Seq': '2', 'X-Boot-Id': 'boot1',
     'X-Capture-Uptime-Us': '1000', 'X-Response-Uptime-Us': '2000', ...headers,
   } })
@@ -31,4 +31,19 @@ it('rejects auth failures, stale captures and missing proxy', async () => {
   await expect(fetchSnapshot('http://device', '')).rejects.toThrow('오래')
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, { 'Content-Type': 'text/html' })))
   await expect(fetchSnapshot('http://device', '')).rejects.toThrow('중계 서버')
+})
+it('rejects non-JPEG bytes even when content type claims JPEG', async () => {
+  const r = new Response('not-a-jpeg', { headers: {
+    'Content-Type': 'image/jpeg', 'X-Frame-Seq':'2', 'X-Boot-Id':'b',
+    'X-Capture-Uptime-Us':'1', 'X-Response-Uptime-Us':'2' } })
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(r))
+  await expect(fetchSnapshot('http://device', '')).rejects.toThrow('JPEG')
+})
+it('rejects repeated capture time despite an increasing sequence', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response()))
+  await expect(fetchSnapshot('http://device', '', { boot:'boot1', seq:1, captureUs:1000 })).rejects.toThrow('정지')
+})
+it('shows the proxy diagnosis without dumping request credentials', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ message:'ESP32 응답 시간 초과' }), { status:504 })))
+  await expect(fetchSnapshot('http://device', 'private-test-value')).rejects.toThrow('ESP32 응답 시간 초과')
 })
