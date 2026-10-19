@@ -98,8 +98,10 @@ export default function App() {
   }, [viewMode])
 
   // ---- 카메라 모드 영상 입력 소스 (스펙 §W3): 내장 카메라 | ESP32 MJPEG 스트림 ----
-  const [videoSourceKind, setVideoSourceKind] = useState('BUILTIN') // 'BUILTIN' | 'ESP32'
+  const [videoSourceKind, setVideoSourceKind] = useState('ESP32') // 'BUILTIN' | 'ESP32'
   const [espUrl, setEspUrl] = useState('')
+  const [espToken, setEspToken] = useState('')
+  const [espConnection, setEspConnection] = useState(null)
 
   // 화면에 그릴 최신 tick 스냅샷 (표시 전용 — 판정 로직은 ref 기반으로 독립 루프에서 돈다)
   const [display, setDisplay] = useState({
@@ -383,12 +385,15 @@ export default function App() {
           {mode === 'CAMERA' ? (
             <CameraView
               mode={videoSourceKind === 'ESP32' ? 'esp32' : 'camera'}
-              espUrl={videoSourceKind === 'ESP32' && espUrl ? `/esp32-proxy?url=${encodeURIComponent(espUrl)}` : espUrl}
+              espUrl={espConnection?.url ?? ''}
+              espToken={espConnection?.token ?? ''}
               onVision={onCameraVision}
             />
           ) : (
             <div className="camera-view scenario-placeholder">
               <div className="scenario-placeholder-body">
+                <button className="camera-start" onClick={() => setMode('CAMERA')}>ESP32 카메라로 신호등 인식 시작</button>
+                <p>ESP32와 같은 Wi-Fi에서 기기 주소와 접속 토큰을 입력해 주세요.</p>
                 <div className="scenario-placeholder-title">시나리오 모드</div>
                 <div className="scenario-placeholder-label">{SCENARIOS[scenarioId]?.label}</div>
                 <div className="scenario-placeholder-desc">{SCENARIOS[scenarioId]?.description}</div>
@@ -403,7 +408,7 @@ export default function App() {
           vision={display.vision}
           ages={display.ages}
           citsNetworkState={mode === 'CAMERA' ? citsConn : null}
-          videoSourceLabel={mode === 'CAMERA' ? (videoSourceKind === 'ESP32' ? 'ESP32 스트림' : '내장 카메라') : null}
+          videoSourceLabel={mode === 'CAMERA' ? (videoSourceKind === 'ESP32' ? 'ESP32 스냅샷' : '내장 카메라') : null}
         />
       </main>
 
@@ -422,15 +427,20 @@ export default function App() {
           >
             ESP32
           </button>
-          {videoSourceKind === 'ESP32' && (
+          {videoSourceKind === 'ESP32' && (<>
             <input
               className="esp32-url-input"
               type="text"
-              placeholder="ESP32 스트림 URL (예: http://192.168.0.50/stream)"
+              aria-label="ESP32 주소" placeholder="ESP32 주소 (예: http://192.168.0.50)"
               value={espUrl}
               onChange={(e) => setEspUrl(e.target.value)}
             />
-          )}
+            <input className="esp32-url-input" type="password" aria-label="ESP32 기기 토큰"
+              placeholder="기기 접속 토큰" autoComplete="off" value={espToken}
+              onChange={(e) => setEspToken(e.target.value)} />
+            <button onClick={() => setEspConnection({ url: espUrl.trim(), token: espToken })}>ESP32 연결</button>
+            <p>ESP32와 같은 Wi-Fi의 PC에서 개발 서버로 실행해 주세요. 기기 토큰은 이 탭의 메모리에만 보관됩니다.</p>
+          </>)}
         </section>
       )}
 

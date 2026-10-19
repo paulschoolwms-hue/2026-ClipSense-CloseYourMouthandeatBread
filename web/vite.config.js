@@ -80,10 +80,18 @@ function esp32ProxyPlugin() {
           return
         }
         try {
-          const upstream = await fetch(target)
+          const token = req.headers['x-clip-device-token']
+          const upstream = await fetch(target, {
+            headers: token ? { 'X-Clip-Device-Token': token } : {},
+            signal: AbortSignal.timeout(5000),
+          })
           res.statusCode = upstream.status
           res.setHeader('Access-Control-Allow-Origin', '*')
           res.setHeader('Cache-Control', 'no-store')
+          for (const name of ['X-Frame-Seq', 'X-Boot-Id', 'X-Capture-Uptime-Us', 'X-Response-Uptime-Us']) {
+            const value = upstream.headers.get(name)
+            if (value != null) res.setHeader(name, value)
+          }
           const contentType = upstream.headers.get('content-type')
           if (contentType) res.setHeader('Content-Type', contentType)
           if (!upstream.body) {

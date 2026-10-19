@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { analyzeFrame, REGION_RATIO } from '../vision/signalDetector.js'
-import { startCamera, stopStream, grabFrame } from '../sources/videoSource.js'
+import { startCamera, stopStream, grabFrame, cameraErrorMessage } from '../sources/videoSource.js'
+
+import { fetchSnapshot } from '../sources/esp32Snapshot.js'
 
 const ANALYZE_MS = 300
 const STEP = 4 // 다운샘플 간격(px) — quality 산식은 analyzeFrame과 별개로 독립 계산
@@ -65,7 +67,7 @@ function computeQuality(frame) {
  * UI 계층이므로 허용 — 안전 코어에는 clock 인자로 전달됨) · `quality`를
  * 추가한다.
  */
-export default function CameraView({ mode, espUrl, onVision }) {
+export default function CameraView({ mode, espUrl, espToken, onVision }) {
   const videoRef = useRef(null)
   const imgRef = useRef(null)
   const canvasRef = useRef(document.createElement('canvas'))
@@ -73,26 +75,92 @@ export default function CameraView({ mode, espUrl, onVision }) {
   onVisionRef.current = onVision
   const frameSeqRef = useRef(0)
   const [error, setError] = useState(null)
+  const [facing, setFacing] = useState('environment')
+  const [attempt, setAttempt] = useState(0)
+  const [result, setResult] = useState(null)
+  const [ready, setReady] = useState(false)
+  const lastFrameAtRef = useRef(0)
+  const lastVideoTimeRef = useRef(-1)
 
   useEffect(() => {
     let stream = null
     let cancelled = false
     setError(null)
+    setReady(false)
+    setResult(null)
+    lastVideoTimeRef.current = -1
+    lastFrameAtRef.current = 0
+    onVisionRef.current({ color: 'unknown', confidence: 0, quality: 0,
+      frameSeq: ++frameSeqRef.current, capturedAtMonoMs: performance.now() })
     if (mode === 'camera') {
-      startCamera(videoRef.current)
-        .then((s) => { if (cancelled) stopStream(s); else stream = s })
-        .catch(() => setError('카메라 접근이 거부되었습니다. 브라우저 권한을 확인하세요.'))
+      startCamera(videoRef.current, facing, () => cancelled)
+        .then((s) => { if (cancelled) stopStream(s); else { stream = s; setReady(Boolean(s)) } })
+        .catch((e) => { if (!cancelled) setError(cameraErrorMessage(e)) })
     }
     return () => { cancelled = true; stopStream(stream) }
-  }, [mode])
+  }, [mode, facing, attempt])
 
   useEffect(() => {
+    if (mode !== 'esp32') return undefined
+    let cancelled = false
+    let timer
+    let previous = null
+    let objectUrl = null
+    const controller = new AbortController()
+    setResult(null)
+    setError(null)
+    if (!espUrl) return undefined
+    const poll = async () => {
+      try {
+        const shot = await fetchSnapshot(espUrl, espToken, previous,
+          AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]))
+        if (cancelled) return
+        const nextUrl = URL.createObjectURL(shot.blob)
+        if (objectUrl) URL.revokeObjectURL(objectUrl)
+        objectUrl = nextUrl
+        const image = imgRef.current
+        image.src = objectUrl
+        await image.decode()
+        if (cancelled) return
+        const frame = grabFrame(image, canvasRef.current)
+        if (!frame) throw new Error('ESP32 JPEG 영상을 읽을 수 없습니다.')
+        previous = shot
+        const base = analyzeFrame(frame)
+        setResult(base)
+        setError(null)
+        onVisionRef.current({ ...base, frameSeq: ++frameSeqRef.current,
+          capturedAtMonoMs: shot.capturedAtMonoMs, quality: computeQuality(frame) })
+      } catch (e) {
+        if (cancelled) return
+        setResult(null)
+        setError(e.name === 'TimeoutError' ? 'ESP32 응답 시간 초과. 같은 Wi-Fi와 기기 전원을 확인해 주세요.' : e.message)
+        onVisionRef.current({ color: 'unknown', confidence: 0, quality: 0,
+          frameSeq: ++frameSeqRef.current, capturedAtMonoMs: performance.now() })
+      } finally {
+        if (!cancelled) timer = setTimeout(poll, ANALYZE_MS)
+      }
+    }
+    poll()
+    return () => { cancelled = true; controller.abort(); clearTimeout(timer); if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [mode, espUrl, espToken])
+
+  useEffect(() => {
+    if (mode !== 'camera') return undefined
     const id = setInterval(() => {
       const el = mode === 'camera' ? videoRef.current : imgRef.current
       if (!el) return
+      // A paused video must age out instead of acquiring a fresh timestamp.
+      if (mode === 'camera' && (!ready || el.readyState < 2 ||
+          el.currentTime === lastVideoTimeRef.current)) {
+        if (performance.now() - lastFrameAtRef.current > 1500) setResult(null)
+        return
+      }
       const frame = grabFrame(el, canvasRef.current)
+      if (mode === 'camera') lastVideoTimeRef.current = el.currentTime
+      if (frame) lastFrameAtRef.current = performance.now()
       frameSeqRef.current += 1
       const base = frame ? analyzeFrame(frame) : { color: 'unknown', confidence: 0 }
+      setResult(frame ? base : null)
       onVisionRef.current({
         ...base,
         frameSeq: frameSeqRef.current,
@@ -101,18 +169,30 @@ export default function CameraView({ mode, espUrl, onVision }) {
       })
     }, ANALYZE_MS)
     return () => clearInterval(id)
-  }, [mode])
+  }, [mode, ready, facing, attempt])
 
   return (
     <div className="camera-view">
       {mode === 'camera' ? (
-        <video ref={videoRef} muted playsInline />
+        <video ref={videoRef} muted playsInline autoPlay aria-label="신호등 인식 카메라" />
       ) : (
-        <img ref={imgRef} src={espUrl} crossOrigin="anonymous" alt="ESP32 스트림" />
+        <img ref={imgRef} alt="ESP32 카메라 영상" />
       )}
       <div className="region-line" style={{ top: `${REGION_RATIO * 100}%` }} />
       <span className="region-label">↑ 신호등 분석 영역</span>
-      {error && <div className="camera-error">{error}</div>}
+      <div className={`camera-result camera-result-${result?.color ?? 'unknown'}`} role="status" aria-live="polite">
+        {result?.color === 'red' ? '🔴 빨간 신호 감지' : result?.color === 'green' ? '🟢 초록 신호 감지' : '신호등을 분석 영역에 맞춰 주세요'}
+        {result?.color !== 'unknown' && result && <small>색상 점수 {Math.round(result.confidence * 100)}%</small>}
+      </div>
+      {mode === 'camera' && <div className="camera-controls">
+        <button onClick={() => setFacing((v) => v === 'environment' ? 'user' : 'environment')}>카메라 전환</button>
+        <button onClick={() => setAttempt((v) => v + 1)}>다시 연결</button>
+      </div>}
+      {mode === 'esp32' && !espUrl && <div className="camera-loading">아래에서 ESP32 주소와 기기 토큰을 입력하고 ESP32 연결을 눌러 주세요.</div>}
+      {mode === 'camera' && !ready && !error && <div className="camera-loading" role="status">카메라 연결 중 · 접근 권한을 허용해 주세요</div>}
+      {error && <div className="camera-error" role="alert"><span>{error}</span>
+        {mode === 'camera' && <button onClick={() => setAttempt((v) => v + 1)}>다시 시도</button>}
+      </div>}
     </div>
   )
 }
