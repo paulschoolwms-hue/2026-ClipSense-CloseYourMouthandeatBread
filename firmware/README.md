@@ -286,3 +286,17 @@ firmware/
 - 노트북 쪽 도구: `scripts/laptop_frame_relay.py`
 - 카메라 진단 스케치: `firmware/tools/camera_probe` (XCLK·SDA/SCL·I2C 주소 스캔)
 - 끄려면 `config.h`의 `CLIP_ENABLE_LAPTOP_RELAY 0`
+
+## 화질 프로필 (0.3.1)
+
+PSRAM이 있는 보드는 기본 VGA(640×480), JPEG quality 10으로 촬영한다.
+기존 QVGA(320×240), quality 12보다 원본 미리보기의 세부를 늘리고 압축을 줄인 설정이다.
+웹 색상 분석은 계속 320px로 축소하므로 원본 해상도 증가가 인식 정확도 향상을 보장하지는 않는다.
+OV3660의 수직 반전은 유지하고 밝기/채도를 중립값(0)으로 설정한다.
+PSRAM이 없으면 기존 QVGA·버퍼 1개 폴백을 유지한다.
+
+원본 픽셀 수는 4배가 되어 전송량/지연이 늘 수 있다. 실기기에서 `/health`의
+`resolution`이 `640x480`인지, `/capture`의 사진과 응답 지연을 확인해야 한다.
+느린 무선망에서는 `config.h`의 `CLIP_FRAME_SIZE`를 `FRAMESIZE_QVGA`,
+`CLIP_JPEG_QUALITY`를 `12`로 되돌리고 컴파일·업로드한다.
+렌즈 보호필름, 오염, 흔들림이나 광학 초점 문제는 해상도 변경으로 해결되지 않는다.

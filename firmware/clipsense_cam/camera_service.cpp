@@ -50,7 +50,7 @@ bool CameraService::begin() {
   cfg.pin_reset = CLIP_PIN_RESET;
   cfg.xclk_freq_hz = CLIP_XCLK_FREQ_HZ;
 
-  // 보고서 §9.2의 초기 프로필.
+  // config.h의 촬영 프로필. 원본 화질과 웹 분석 해상도는 독립적이다.
   cfg.pixel_format = PIXFORMAT_JPEG;
   cfg.frame_size = CLIP_FRAME_SIZE;
   cfg.jpeg_quality = CLIP_JPEG_QUALITY;
@@ -79,8 +79,9 @@ bool CameraService::begin() {
     // OV3660은 기본값에서 상이 뒤집혀 나온다(벤더 권장 보정).
     if (sensor->id.PID == OV3660_PID) {
       sensor->set_vflip(sensor, 1);
-      sensor->set_brightness(sensor, 1);
-      sensor->set_saturation(sensor, -2);
+      // 색 판별용 입력이므로 노출 밝기 증가와 탈채도 보정을 하지 않는다.
+      sensor->set_brightness(sensor, 0);
+      sensor->set_saturation(sensor, 0);
     }
   }
 

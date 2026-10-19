@@ -7,17 +7,18 @@
 #pragma once
 
 // ── 펌웨어 식별 ────────────────────────────────────────────────────────────
-#define CLIP_FIRMWARE_VERSION "0.3.0"
+#define CLIP_FIRMWARE_VERSION "0.3.1"
 #define CLIP_API_SCHEMA_VERSION "clipsense-camera-api-v1"
 
 // 기기 식별자. 여러 대를 같은 망에 둘 때 기기마다 다르게 준다.
 #define CLIP_DEVICE_ID "clipsense-cam-01"
 
 // ── 카메라 프로필 (보고서 §9.2) ────────────────────────────────────────────
-// QVGA(320x240)는 판정 파이프라인이 입력을 320px로 줄이는 것과 맞춘 값이다.
-// VGA로 올리려면 원본에서 ROI를 먼저 자른 뒤 축소해야 이점이 있다(§9.2 주).
-#define CLIP_FRAME_SIZE FRAMESIZE_QVGA
-#define CLIP_JPEG_QUALITY 12  // 낮을수록 고화질·큰 용량 (0~63)
+// 원본 미리보기는 VGA(640x480), 웹 색상 분석은 별도로 320px에 축소한다.
+// PSRAM이 없으면 camera_service.cpp에서 QVGA로 낮춘다.
+// 픽셀 수가 4배가 되므로 실제 전송 지연은 기기/무선망에서 측정해야 한다.
+#define CLIP_FRAME_SIZE FRAMESIZE_VGA
+#define CLIP_JPEG_QUALITY 10  // 낮을수록 고화질·큰 용량 (0~63)
 #define CLIP_FB_COUNT 2
 
 // ── 네트워크 (보고서 §9.4) ─────────────────────────────────────────────────

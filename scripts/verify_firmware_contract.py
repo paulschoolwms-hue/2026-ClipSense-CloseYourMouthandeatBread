@@ -148,8 +148,9 @@ def main() -> None:
 
     print("\n=== §9.2 카메라 프로필 ===")
     check("PIXFORMAT_JPEG", "PIXFORMAT_JPEG" in camera)
-    check("FRAMESIZE_QVGA 기본", "CLIP_FRAME_SIZE FRAMESIZE_QVGA" in config)
-    check("jpeg_quality 12", "CLIP_JPEG_QUALITY 12" in config)
+    check("FRAMESIZE_VGA 기본", "CLIP_FRAME_SIZE FRAMESIZE_VGA" in config)
+    check("jpeg_quality 10", "CLIP_JPEG_QUALITY 10" in config)
+    check("PSRAM 없음: QVGA 폴백", "cfg.frame_size = FRAMESIZE_QVGA" in camera)
     check("fb_count 2", "CLIP_FB_COUNT 2" in config)
     check("CAMERA_GRAB_LATEST", "CAMERA_GRAB_LATEST" in camera)
     check("fb_location PSRAM", "CAMERA_FB_IN_PSRAM" in camera)
