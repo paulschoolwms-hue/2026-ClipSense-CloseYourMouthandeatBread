@@ -84,6 +84,9 @@ void printBootLog() {
   Serial.println();
   Serial.println(F("=== ClipSense camera ==="));
   Serial.printf("firmwareVersion   %s\n", CLIP_FIRMWARE_VERSION);
+  Serial.printf("networkMode       %s\n", network.modeName());
+  Serial.printf("hostname          %s.local\n", network.hostname().c_str());
+  Serial.printf("ip                %s\n", network.ip().toString().c_str());
   Serial.printf("buildTimestamp    %s %s\n", __DATE__, __TIME__);
   Serial.printf("deviceId          %s\n", CLIP_DEVICE_ID);
   Serial.printf("bootId            %s\n", bootId);
@@ -96,14 +99,13 @@ void printBootLog() {
   }
   Serial.printf("resolution        %dx%d\n", camera.frameWidth(),
                 camera.frameHeight());
-  Serial.printf("jpegQuality       %d\n", CLIP_JPEG_QUALITY);
+  Serial.printf("jpegQuality       %d\n", camera.jpegQuality());
+  Serial.printf("cameraProfile     %s\n", camera.profileName());
+  Serial.printf("rssiDbm           %d\n", network.rssiDbm());
   Serial.printf("psramBytes        %u\n", ESP.getPsramSize());
   Serial.printf("freePsram         %u\n", ESP.getFreePsram());
   Serial.printf("heapBytes         %u\n", ESP.getHeapSize());
   Serial.printf("minFreeHeap       %u\n", ESP.getMinFreeHeap());
-  Serial.printf("networkMode       %s\n", network.modeName());
-  Serial.printf("hostname          %s.local\n", network.hostname().c_str());
-  Serial.printf("ip                %s\n", network.ip().toString().c_str());
   if (network.state() == NetState::ApRecovery) {
     Serial.printf("apSsid            %s\n", network.apSsid().c_str());
     if (strlen(CLIP_AP_PASSWORD) < 8) {
@@ -161,6 +163,20 @@ void setup() {
 }
 
 void loop() {
+  static char command[16];
+  static size_t commandLen = 0;
+  while (Serial.available()) {
+    const char ch = static_cast<char>(Serial.read());
+    if (ch == '\n' || ch == '\r') {
+      command[commandLen] = '\0';
+      if (strcmp(command, "status") == 0) {
+        Serial.printf("firmwareVersion %s\nnetworkMode %s\nip %s\ncameraOk %s\ncameraProfile %s\nrssiDbm %d\n",
+          CLIP_FIRMWARE_VERSION, network.modeName(), network.ip().toString().c_str(),
+          camera.cameraOk() ? "true" : "false", camera.profileName(), network.rssiDbm());
+      }
+      commandLen = 0;
+    } else if (commandLen + 1 < sizeof(command)) command[commandLen++] = ch;
+  }
   network.loop();
   if (api != nullptr) api->loop();
 

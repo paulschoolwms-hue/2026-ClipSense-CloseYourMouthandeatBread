@@ -93,6 +93,7 @@ export default function App() {
   const [videoSourceKind, setVideoSourceKind] = useState('ESP32') // 'BUILTIN' | 'ESP32'
   const [espUrl, setEspUrl] = useState('')
   const [espToken, setEspToken] = useState('')
+  const [espProfile, setEspProfile] = useState('stable')
   const [espConnection, setEspConnection] = useState(null)
   const [cameraStatus, setCameraStatus] = useState(null)
   const [cameraVision, setCameraVision] = useState(null)
@@ -393,6 +394,7 @@ export default function App() {
               espUrl={espConnection?.url ?? ''}
               espToken={espConnection?.token ?? ''}
               connectionId={espConnection?.id}
+              espProfile={espConnection?.profile ?? 'stable'}
               onStatus={setCameraStatus}
               onVision={onCameraVision}
             />
@@ -445,7 +447,12 @@ export default function App() {
             <input className="esp32-url-input" type="password" aria-label="ESP32 기기 토큰"
               placeholder="기기 접속 토큰" autoComplete="off" value={espToken}
               onChange={(e) => setEspToken(e.target.value)} />
-            <button onClick={() => setEspConnection({ url: espUrl.trim(), token: espToken, id: Date.now() })}>ESP32 연결</button>
+            <label>화질 <select aria-label="ESP32 화질" value={espProfile} onChange={(e) => setEspProfile(e.target.value)}>
+              <option value="stable">안정 · 320×240</option>
+              <option value="balanced">균형 · 640×480 (압축 우선)</option>
+              <option value="detail">선명 · 640×480 (큰 사진)</option>
+            </select></label>
+            <button onClick={() => setEspConnection({ url: espUrl.trim(), token: espToken, profile: espProfile, id: Date.now() })}>ESP32 연결</button>
             <p>ESP32와 같은 Wi-Fi의 PC에서 개발 서버로 실행해 주세요. 기기 토큰은 이 탭의 메모리에만 보관됩니다.</p>
           </>)}
         </section>

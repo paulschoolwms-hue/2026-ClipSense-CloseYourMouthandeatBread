@@ -136,7 +136,7 @@ def main() -> None:
     )
     check(
         "frameSeq 증가 전에 mutex를 놓지 않음",
-        "xSemaphoreGive" not in between.split("if (fb == nullptr)")[0],
+        all(re.match(r"\s*return result;", part) for part in between.split("xSemaphoreGive(_mutex);")[1:]),
         "획득 실패 경로 외에서 mutex를 놓으면 원자성이 깨진다",
     )
     check(

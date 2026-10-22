@@ -152,7 +152,10 @@ def test_matches_firmware_source() -> None:
     text = HTTP_API.read_text(encoding="utf-8")
     # handleHealth 본문 안의 \"key\": 만 본다 — 오류 본문의 \"error\": 가 섞이지 않게.
     body = text.split("void HttpApi::handleHealth()")[1].split("void HttpApi::handleCapture()")[0]
-    fw_keys = re.findall(r'\\"(\w+)\\":', body)
+    # lastTransfer는 중첩된 선택 진단이며 v1 필수 키에 포함하지 않는다.
+    top_level = body.split('lastTransfer')[0]
+    fw_keys = re.findall(r'\\"(\w+)\\":', top_level)
+    fw_keys = [k for k in fw_keys if k not in ('cameraProfile', 'supportsVga')]
     camera = default_camera()
     sim_keys = list(camera.health().keys())
     check(

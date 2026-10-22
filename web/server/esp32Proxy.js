@@ -2,7 +2,8 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 const COPY_HEADERS = ['content-type', 'X-Frame-Seq', 'X-Boot-Id', 'X-Capture-Uptime-Us',
-  'X-Response-Uptime-Us', 'X-Camera-Sensor', 'X-Frame-Source', 'X-Firmware-Version']
+  'X-Response-Uptime-Us', 'X-Camera-Sensor', 'X-Frame-Source', 'X-Firmware-Version',
+  'content-length', 'X-Camera-Profile', 'X-Jpeg-Quality', 'X-Wifi-Rssi']
 export function proxyFailure(error) {
   const code = error?.cause?.code ?? error?.code
   if (error?.name === 'TimeoutError' || code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') {
@@ -13,6 +14,7 @@ export function proxyFailure(error) {
 }
 
 export function createEsp32Proxy(fetchImpl = fetch) {
+  const busy = new Set()
   return async (req, res) => {
     let target
     try {
@@ -23,6 +25,14 @@ export function createEsp32Proxy(fetchImpl = fetch) {
       res.end(JSON.stringify({ code: 'BAD_DEVICE_URL', message: 'ESP32 주소는 http://로 시작해야 합니다. 맥의 HTTPS 주소를 입력하지 마세요.' }))
       return
     }
+    const capture = ['/capture', '/jpg'].includes(target.pathname)
+    const key = target.origin
+    if (capture && busy.has(key)) {
+      res.writeHead(409, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      res.end(JSON.stringify({ code: 'DEVICE_BUSY', message: 'ESP32에서 다른 사진 요청을 처리 중입니다. 다른 카메라 탭이나 진단을 닫고 다시 시도하세요.' }))
+      return
+    }
+    if (capture) busy.add(key)
     const controller = new AbortController()
     res.on('close', () => controller.abort())
     try {
@@ -43,6 +53,8 @@ export function createEsp32Proxy(fetchImpl = fetch) {
       const failure = proxyFailure(error)
       res.writeHead(failure.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify(failure)) // 토큰/요청 URL/네트워크 예외 원문을 남기지 않는다.
+    } finally {
+      if (capture) busy.delete(key)
     }
   }
 }

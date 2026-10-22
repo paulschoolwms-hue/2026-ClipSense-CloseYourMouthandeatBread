@@ -25,6 +25,7 @@ TESTS = [
     "test_clip_cam_sim.py",
     "verify_firmware_contract.py",
     "test_jpeg_transfer.py",
+    "test_camera_profiles.py",
 ]
 
 failed = []

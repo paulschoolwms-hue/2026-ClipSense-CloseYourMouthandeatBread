@@ -17,6 +17,7 @@
 #include <freertos/semphr.h>
 
 #include "config.h"
+#include "camera_profiles.h"
 
 // 한 번의 획득 결과. fb가 non-null이면 반드시 release()로 반환해야 한다.
 struct CaptureResult {
@@ -33,12 +34,15 @@ class CameraService {
 
   // 한 프레임을 획득한다. 다른 요청이 이미 카메라를 쓰고 있으면 busy로 실패.
   // timeoutMs 동안 mutex를 기다린다.
-  CaptureResult capture(uint32_t timeoutMs = 1500);
+  CaptureResult capture(uint32_t timeoutMs = 1500, CameraProfile desired = CameraProfile::Current);
 
   // capture()가 돌려준 framebuffer를 반환한다. 반환 뒤 포인터를 재사용하지 않는다.
   void release(CaptureResult& result);
 
   // ── 진단(/health) ──
+  const char* profileName() const { return cameraProfileSpec(_profile).name; }
+  int jpegQuality() const { return cameraProfileSpec(_profile).jpegQuality; }
+  bool supportsVga() const { return _supportsVga; }
   bool cameraOk() const { return _cameraOk; }
   const char* sensorName() const { return _sensorName; }
   uint32_t frameSeq() const { return _frameSeq; }
@@ -54,6 +58,10 @@ class CameraService {
   bool lastAttemptWasBusy() const { return _lastAttemptWasBusy; }
 
  private:
+  bool setProfileLocked(CameraProfile desired);
+  CameraProfile _profile = CameraProfile::Stable;
+  bool _supportsVga = false;
+  unsigned _discardFrames = 0;
   SemaphoreHandle_t _mutex = nullptr;
   bool _cameraOk = false;
   const char* _sensorName = "unknown";

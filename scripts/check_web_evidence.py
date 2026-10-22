@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import sys
+from urllib.parse import parse_qs, urlsplit
 from playwright.sync_api import sync_playwright, expect
 
 base_url = sys.argv[1] if len(sys.argv) > 1 else 'http://127.0.0.1:4182'
@@ -36,17 +37,24 @@ with sync_playwright() as p:
           return c.toDataURL('image/jpeg').split(',')[1];
         }''', css)
         frames[color] = base64.b64decode(data)
-    state = {'seq': 0, 'color': 'red', 'fail': False, 'sensor': 'OV3660', 'mock_requests': 0}
+    state = {'seq': 0, 'color': 'red', 'fail': False, 'sensor': 'OV3660', 'mock_requests': 0, 'quality_fail': 0, 'profiles': []}
     def device(route):
         assert route.request.headers.get('x-clip-device-token') == 'browser-test-only-token'
-        if state['fail']:
+        target = parse_qs(urlsplit(route.request.url).query)['url'][0]
+        profile = parse_qs(urlsplit(target).query).get('profile', ['stable'])[0]
+        state['profiles'].append(profile)
+        quality_failure = state['quality_fail'] > 0 and profile != 'stable'
+        if quality_failure:
+            state['quality_fail'] -= 1
+        if state['fail'] or quality_failure:
             route.fulfill(status=502, content_type='application/json', body=json.dumps({'message': 'TEST 연결 장애'}))
             return
         state['seq'] += 1
         route.fulfill(status=200, headers={'Content-Type':'image/jpeg', 'X-Frame-Seq':str(state['seq']),
             'X-Boot-Id':'1234abcd', 'X-Capture-Uptime-Us':str(state['seq']*1000000),
             'X-Response-Uptime-Us':str(state['seq']*1000000+1000), 'X-Camera-Sensor':state['sensor'],
-            'X-Firmware-Version':'BROWSER-TEST', 'X-Frame-Source':'camera'}, body=frames[state['color']])
+            'X-Firmware-Version':'BROWSER-TEST', 'X-Frame-Source':'camera',
+            'X-Camera-Profile':profile, 'X-Jpeg-Quality':'18' if profile == 'balanced' else '12', 'X-Wifi-Rssi':'-83'}, body=frames[state['color']])
     def mock_cits(route):
         state['mock_requests'] += 1
         route.abort()
@@ -113,6 +121,14 @@ with sync_playwright() as p:
     assert not errors, errors
     page.set_viewport_size({'width':390, 'height':844})
     assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    # 고화질 선택이 실제 요청에 반영되고 두 번 실패한 뒤 안정 화질로 복구된다.
+    page.get_by_label('ESP32 화질').select_option('balanced')
+    page.get_by_role('button', name='ESP32 연결', exact=True).click()
+    expect(panel).to_contain_text('balanced / 18 / -83dBm')
+    state['quality_fail'] = 2
+    expect(panel).to_contain_text('고화질 수신이 두 번 실패하여 안정 화질로 전환했습니다.', timeout=10000)
+    assert state['profiles'][-1] == 'stable'
+    expect(page.get_by_test_id('connection-state')).to_have_text('새 사진 수신 중')
     # 재실행 시 이전 장면/음성 활성화를 자동 복원하지 않고 새로 확인한다.
     page.reload()
     page.get_by_role('button', name='ESP32 카메라로 신호등 인식 시작').click()

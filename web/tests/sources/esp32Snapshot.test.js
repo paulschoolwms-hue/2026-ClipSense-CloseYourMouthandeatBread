@@ -52,3 +52,29 @@ it('본문 수신 오류를 서버 종료나 토큰 오류로 오진하지 않�
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(r))
   await expect(fetchSnapshot('http://device', '')).rejects.toThrow('본문')
 })
+
+it('selects quality without placing credentials in the URL and checks reported profile', async () => {
+  expect(captureUrl('http://device', 'balanced')).toBe('http://device/capture?profile=balanced')
+  expect(() => captureUrl('http://device', 'invalid')).toThrow('화질')
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, {
+    'X-Camera-Profile': 'balanced', 'X-Jpeg-Quality': '18', 'X-Wifi-Rssi': '-83',
+  })))
+  const shot = await fetchSnapshot('http://device', 'private', null, null, 'balanced')
+  expect(shot).toMatchObject({ profile: 'balanced', jpegQuality: '18', rssiDbm: -83 })
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response()))
+  await expect(fetchSnapshot('http://device', '', null, null, 'balanced')).rejects.toMatchObject({ permanent: true })
+})
+it('rejects a truncated JPEG and mismatched body length', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, { 'content-length': '123' })))
+  await expect(fetchSnapshot('http://device', '')).rejects.toThrow('길이')
+  const r = response()
+  r.blob = async () => new Blob([new Uint8Array([255, 216, 0, 0])])
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(r))
+  await expect(fetchSnapshot('http://device', '')).rejects.toThrow('잘렸')
+})
+it('marks auth and unsupported PSRAM errors as permanent to stop automatic retries', async () => {
+  for (const status of [401, 403, 422]) {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(status)))
+    await expect(fetchSnapshot('http://device', '')).rejects.toMatchObject({ permanent: true })
+  }
+})

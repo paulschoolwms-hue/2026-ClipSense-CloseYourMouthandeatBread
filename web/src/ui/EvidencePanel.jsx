@@ -73,6 +73,8 @@ export default function EvidencePanel({ liveMode, status, vision, decision, spee
       <dt>기기 프레임 / 부팅 ID</dt><dd>{status?.seq ?? '—'} / {status?.boot ?? '—'}</dd>
       <dt>실제 입력 출처</dt><dd>{status?.inputKind === 'BUILTIN' ? '맥/내장 카메라 (클립 증거 아님)' : status?.sensor === 'SIM' ? 'SIM 시뮬레이터 (실촬영 아님)' : status?.frameSource === 'laptop-upload' ? '노트북 중계 (클립 실촬영 아님)' : status?.lastSuccessAt ? `ESP32 · ${status.sensor}` : '아직 확인되지 않음'}</dd>
       <dt>원본 / 펌웨어 / 요청 시간</dt><dd>{status?.width ?? '—'}×{status?.height ?? '—'} / {status?.firmware ?? '—'} / {Number.isFinite(status?.requestMs) ? `${Math.round(status.requestMs)}ms` : '—'}</dd>
+      <dt>실제 화질 / JPEG 압축 / Wi-Fi 신호</dt><dd>{status?.profile ?? '—'} / {status?.jpegQuality ?? '—'} / {Number.isFinite(status?.rssiDbm) ? `${status.rssiDbm}dBm${status.rssiDbm < -75 ? ' · 약한 신호' : ''}` : '미확인'}</dd>
+      {status?.fallbackReason && <><dt>화질 자동 복구</dt><dd>{status.fallbackReason}</dd></>}
       <dt>영상 회전</dt><dd>{status?.rotationDeg ?? 0}도 · 원본 JPEG 저장 파일은 회전 전 원본</dd>
       <dt>판독 / 최종 안내</dt><dd data-testid="final-guidance">{liveMode ? `${COLORS[vision?.color ?? 'unknown']} / 대기 · ${decision?.message ?? '카메라 영상을 기다리고 있습니다. 대기하세요.'}` : '모의 시나리오 — 실제 클립 결과와 구분하세요.'}</dd>
     </dl>

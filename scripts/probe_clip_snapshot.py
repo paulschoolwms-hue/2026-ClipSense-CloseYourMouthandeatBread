@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('address', help='예: http://192.168.0.54')
+    parser.add_argument('--profile', choices=['stable', 'balanced', 'detail'], help='펌웨어 0.3.4 이상. 웹 카메라 탭을 닫고 측정')
     parser.add_argument('--secrets-file', type=Path, default=Path(__file__).resolve().parent.parent / 'firmware/clipsense_cam/secrets.h')
     args = parser.parse_args()
     target = urlsplit(args.address)
@@ -37,7 +38,7 @@ def main():
                 return
             info = json.loads(result.read(8192))
             print('기기 상태:', json.dumps({key: info.get(key) for key in
-                ('firmwareVersion', 'networkMode', 'rssiDbm', 'resolution', 'lastTransfer')}, ensure_ascii=False))
+                ('firmwareVersion', 'networkMode', 'rssiDbm', 'resolution', 'cameraProfile', 'jpegQuality', 'lastTransfer')}, ensure_ascii=False))
         except (OSError, http.client.HTTPException, ValueError):
             print('추가 기기 상태 응답 없음')
         finally:
@@ -49,9 +50,10 @@ def main():
     response = None
     problem = None
     try:
-        connection.request('GET', '/capture', headers={'X-Clip-Device-Token': match.group(1)})
+        connection.request('GET', '/capture' + ('?profile=' + args.profile if args.profile else ''), headers={'X-Clip-Device-Token': match.group(1)})
         response = connection.getresponse()
         print('HTTP:', response.status)
+        print('실제 화질:', response.getheader('X-Camera-Profile', '미지원'), '/ JPEG 압축:', response.getheader('X-Jpeg-Quality', '미지원'))
         print('Content-Length:', response.getheader('Content-Length', '없음'))
         if response.status != 200:
             print('401/403이면 기기 토큰, 503이면 촬영 상태를 확인하세요.')

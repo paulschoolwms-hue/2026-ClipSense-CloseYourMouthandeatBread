@@ -1,13 +1,14 @@
 #include "clip_network.h"
 
 #include <ESPmDNS.h>
+#include <esp_mac.h>
 
 namespace {
 
 // MAC 뒤 4자리(16진). 기기 구분용 접미사로 쓴다(§9.4).
 String macSuffix() {
   uint8_t mac[6] = {0};
-  WiFi.macAddress(mac);
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);  // Wi-Fi 초기화 전에도 실제 MAC을 읽는다.
   char buf[5];
   snprintf(buf, sizeof(buf), "%02x%02x", mac[4], mac[5]);
   return String(buf);

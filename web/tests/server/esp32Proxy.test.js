@@ -26,3 +26,36 @@ it('실제 HTTP 중계가 사진/프레임 메타데이터/토큰을 보존한�
     expect(new Uint8Array(await r.arrayBuffer())).toEqual(new Uint8Array([255, 216, 255, 217]))
   } finally { await Promise.all([new Promise((r) => upstream.close(r)), new Promise((r) => proxy.close(r))]) }
 })
+
+it('blocks concurrent captures per device until the first body completes, then releases it', async () => {
+  let finish
+  const ready = new Promise((resolve) => { finish = resolve })
+  let started
+  const inFlight = new Promise((resolve) => { started = resolve })
+  const handler = createEsp32Proxy(async () => {
+    started()
+    await ready
+    return new Response(new Uint8Array([255, 216, 255, 217]), { headers: {
+      'Content-Type': 'image/jpeg', 'Content-Length': '4', 'X-Camera-Profile': 'detail', 'X-Wifi-Rssi': '-65',
+    } })
+  })
+  const proxy = createServer(handler).listen(0, '127.0.0.1')
+  await once(proxy, 'listening')
+  const url = `http://127.0.0.1:${proxy.address().port}/?url=${encodeURIComponent('http://device/capture?profile=detail')}`
+  try {
+    const first = fetch(url)
+    await inFlight
+    const second = await fetch(url)
+    expect(second.status).toBe(409)
+    expect((await second.json()).code).toBe('DEVICE_BUSY')
+    finish()
+    const r = await first
+    expect(r.headers.get('Content-Length')).toBe('4')
+    expect(r.headers.get('X-Camera-Profile')).toBe('detail')
+    expect(r.headers.get('X-Wifi-Rssi')).toBe('-65')
+    await r.arrayBuffer()
+    const next = await fetch(url)
+    expect(next.status).toBe(200)
+    await next.arrayBuffer()
+  } finally { finish(); await new Promise((r) => proxy.close(r)) }
+})

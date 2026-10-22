@@ -68,7 +68,7 @@ function computeQuality(frame) {
  * UI 계층이므로 허용 — 안전 코어에는 clock 인자로 전달됨) · `quality`를
  * 추가한다.
  */
-export default function CameraView({ mode, espUrl, espToken, connectionId, onVision, onStatus }) {
+export default function CameraView({ mode, espUrl, espToken, connectionId, espProfile = 'stable', onVision, onStatus }) {
   const videoRef = useRef(null)
   const imgRef = useRef(null)
   const canvasRef = useRef(document.createElement('canvas'))
@@ -106,6 +106,7 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, onVis
   useEffect(() => {
     if (mode !== 'esp32') return undefined
     let cancelled = false, timer, previous = null, objectUrl = null, failures = 0
+    let activeProfile = espProfile, fallbackReason = '', stopped = false
     let status = { state: espUrl ? 'connecting' : 'idle', inputKind: 'ESP32', successCount: 0, lastSuccessAt: null }
     const controller = new AbortController()
     setResult(null); setError(null)
@@ -120,7 +121,7 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, onVis
       let stage = '사진 요청'
       try {
         const shot = await fetchSnapshot(espUrl, espToken, previous,
-          deadline.signal)
+          deadline.signal, activeProfile)
         if (cancelled) return
         const nextUrl = URL.createObjectURL(shot.blob)
         if (objectUrl) URL.revokeObjectURL(objectUrl)
@@ -142,7 +143,8 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, onVis
         status = { state: 'connected', inputKind: 'ESP32', successCount: status.successCount + 1,
           lastSuccessAt: shot.receivedAt, seq: shot.seq, boot: shot.boot, captureUs: shot.captureUs,
           sensor: shot.sensor, frameSource: shot.frameSource, firmware: shot.firmware,
-          width: image.naturalWidth, height: image.naturalHeight, requestMs: shot.requestMs, rotationDeg: 180 }
+          width: image.naturalWidth, height: image.naturalHeight, requestMs: shot.requestMs, rotationDeg: 180,
+          profile: shot.profile, requestedProfile: espProfile, jpegQuality: shot.jpegQuality, rssiDbm: shot.rssiDbm, fallbackReason }
         onStatusRef.current?.(status)
         onVisionRef.current({ ...base, frameSeq: ++frameSeqRef.current,
           capturedAtMonoMs: shot.capturedAtMonoMs, quality: computeQuality(frame), frameAvailable: true, blob: shot.blob,
@@ -150,6 +152,11 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, onVis
       } catch (e) {
         if (cancelled) return
         failures++
+        stopped = Boolean(e.permanent)
+        if (!stopped && failures >= 2 && activeProfile !== 'stable') {
+          activeProfile = 'stable'
+          fallbackReason = '고화질 수신이 두 번 실패하여 안정 화질로 전환했습니다.'
+        }
         const message = deadline.timedOut || e.name === 'TimeoutError' ? 'ESP32 응답 시간 초과. 같은 Wi-Fi와 기기 IP를 확인하세요.' :
           e instanceof TypeError ? `${stage} 브라우저 처리 오류 (${e.name}). 브라우저를 최신 버전으로 업데이트하고 다시 연결하세요.` : e.message
         setResult(null); setError(message)
@@ -160,12 +167,12 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, onVis
           frameSeq: frameSeqRef.current, capturedAtMonoMs: previous?.capturedAtMonoMs ?? performance.now() - 5000 })
       } finally {
         deadline.dispose()
-        if (!cancelled) timer = setTimeout(poll, failures ? Math.min(3000, 500 * 2 ** Math.min(failures, 3)) : ANALYZE_MS)
+        if (!cancelled && !stopped) timer = setTimeout(poll, failures ? Math.min(3000, 500 * 2 ** Math.min(failures, 3)) : ANALYZE_MS)
       }
     }
     poll()
     return () => { cancelled = true; controller.abort(); clearTimeout(timer); if (objectUrl) URL.revokeObjectURL(objectUrl) }
-  }, [mode, espUrl, espToken, connectionId])
+  }, [mode, espUrl, espToken, connectionId, espProfile])
 
   useEffect(() => {
     if (mode !== 'camera') return undefined

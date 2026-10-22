@@ -7,16 +7,17 @@
 #pragma once
 
 // ── 펌웨어 식별 ────────────────────────────────────────────────────────────
-#define CLIP_FIRMWARE_VERSION "0.3.3"
+#define CLIP_FIRMWARE_VERSION "0.3.4"
 #define CLIP_API_SCHEMA_VERSION "clipsense-camera-api-v1"
 
 // 기기 식별자. 여러 대를 같은 망에 둘 때 기기마다 다르게 준다.
 #define CLIP_DEVICE_ID "clipsense-cam-01"
 
 // ── 카메라 프로필 (보고서 §9.2) ────────────────────────────────────────────
-// 전송 안정성 비교용 기본값: 최초 실제 JPEG 수신에 성공했던 QVGA/quality 12.
-// VGA/quality 10에서 부분 수신이 관찰돼 우선 작은 원본으로 비교한다.
-// 해상도가 전송 중단의 원인이라고 확정한 것은 아니며 실기기 재측정이 필요하다.
+// 부팅 출력은 실제 수신에 성공한 QVGA/quality 12를 기본으로 한다.
+// 0.3.4의 요청별 stable/balanced/detail 값은 camera_profiles.h에서 정의한다.
+// PSRAM이 있으면 VGA용 버퍼를 확보하되 센서 출력은 안정 화질로 시작한다.
+// docs/esp32-camera-quality.md의 절차로 각 프로필의 실제 전송을 비교한다.
 #define CLIP_FRAME_SIZE FRAMESIZE_QVGA
 #define CLIP_JPEG_QUALITY 12  // 낮을수록 고화질·큰 용량 (0~63)
 #define CLIP_FB_COUNT 2
@@ -24,7 +25,7 @@
 // ── 네트워크 (보고서 §9.4) ─────────────────────────────────────────────────
 // STA 연결 제한시간. 초과하면 복구용 SoftAP로 전환한다(자동 안전 failover가
 // 아니라, 사용자가 직접 접속해 상태를 확인하기 위한 복구 경로다).
-#define CLIP_STA_CONNECT_TIMEOUT_MS 15000UL
+#define CLIP_STA_CONNECT_TIMEOUT_MS 30000UL
 
 // STA_ACTIVE 중 연결이 끊기면 이 간격으로 재접속을 시도한다(비동기).
 #define CLIP_STA_RETRY_INTERVAL_MS 5000UL

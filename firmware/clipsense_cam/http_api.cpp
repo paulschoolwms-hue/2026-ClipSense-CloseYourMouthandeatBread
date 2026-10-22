@@ -106,7 +106,7 @@ void HttpApi::applyCommonHeaders(bool exposeCaptureHeaders) {
       _server.sendHeader(
           "Access-Control-Expose-Headers",
           "X-Frame-Seq, X-Capture-Uptime-Us, X-Response-Uptime-Us, X-Boot-Id, "
-          "X-Firmware-Version, X-Camera-Sensor, X-Frame-Source");
+          "X-Firmware-Version, X-Camera-Sensor, X-Frame-Source, X-Camera-Profile, X-Jpeg-Quality, X-Wifi-Rssi");
     }
   }
 }
@@ -168,7 +168,9 @@ void HttpApi::handleHealth() {
   json += "\"wifiDisconnectCount\":" + String(_net.disconnectCount()) + ",";
   json += "\"resolution\":\"" + String(_camera.frameWidth()) + "x" +
           String(_camera.frameHeight()) + "\",";
-  json += "\"jpegQuality\":" + String(CLIP_JPEG_QUALITY) + ",";
+  json += "\"jpegQuality\":" + String(_camera.jpegQuality()) + ",";
+  json += "\"cameraProfile\":\"" + String(_camera.profileName()) + "\",";
+  json += "\"supportsVga\":" + String(_camera.supportsVga() ? "true" : "false") + ",";
   json += "\"psramBytes\":" + String(ESP.getPsramSize()) + ",";
   json += "\"freePsramBytes\":" + String(ESP.getFreePsram()) + ",";
   json += "\"heapBytes\":" + String(ESP.getHeapSize()) + ",";
@@ -212,7 +214,18 @@ void HttpApi::handleCapture() {
   // 카메라가 초기화되지 않았으면 노트북 업로드 프레임으로 대신한다(표시 헤더 포함).
   if (!_camera.cameraOk() && sendRelayFrame()) return;
 
-  CaptureResult shot = _camera.capture();
+  CameraProfile requested = CameraProfile::Current;
+  if (_server.hasArg("profile") && !parseCameraProfile(_server.arg("profile").c_str(), requested)) {
+    applyCommonHeaders(false);
+    _server.send(400, "application/json", "{\"error\":\"invalid_profile\"}");
+    return;
+  }
+  if (!_camera.supportsVga() && requested != CameraProfile::Current && requested != CameraProfile::Stable) {
+    applyCommonHeaders(false);
+    _server.send(422, "application/json", "{\"error\":\"profile_requires_psram\"}");
+    return;
+  }
+  CaptureResult shot = _camera.capture(1500, requested);
   if (!shot.ok) {
     applyCommonHeaders(false);
     // 획득 실패 시 마지막 JPEG을 재전송하지 않는다(§10.3) — 오래된 프레임을
@@ -240,6 +253,9 @@ void HttpApi::handleCapture() {
   _server.sendHeader("X-Boot-Id", _bootId);
   _server.sendHeader("X-Firmware-Version", CLIP_FIRMWARE_VERSION);
   _server.sendHeader("X-Camera-Sensor", _camera.sensorName());
+  _server.sendHeader("X-Camera-Profile", _camera.profileName());
+  _server.sendHeader("X-Jpeg-Quality", String(_camera.jpegQuality()));
+  _server.sendHeader("X-Wifi-Rssi", String(_net.rssiDbm()));
 
   _server.setContentLength(shot.fb->len);
   _server.send(200, "image/jpeg", "");

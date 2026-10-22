@@ -52,7 +52,10 @@ bool CameraService::begin() {
 
   // config.h의 촬영 프로필. 원본 화질과 웹 분석 해상도는 독립적이다.
   cfg.pixel_format = PIXFORMAT_JPEG;
-  cfg.frame_size = CLIP_FRAME_SIZE;
+  _supportsVga = psramFound();
+  // VGA까지 안전하게 전환할 수 있도록 PSRAM 프레임버퍼를 VGA 크기로 확보한다.
+  // 센서의 실제 부팅 출력은 초기화 직후 안정(QVGA)으로 낮춘다.
+  cfg.frame_size = _supportsVga ? FRAMESIZE_VGA : FRAMESIZE_QVGA;
   cfg.jpeg_quality = CLIP_JPEG_QUALITY;
   cfg.fb_count = CLIP_FB_COUNT;
   cfg.grab_mode = CAMERA_GRAB_LATEST;  // 오래된 프레임을 쌓아두지 않는다
@@ -85,12 +88,29 @@ bool CameraService::begin() {
     }
   }
 
+  if (sensor == nullptr || sensor->set_framesize(sensor, FRAMESIZE_QVGA) != 0 ||
+      sensor->set_quality(sensor, CLIP_JPEG_QUALITY) != 0) {
+    _lastError = "stable_profile_init_failed";
+    return false;
+  }
+  // 초기 버퍼에 남아 있는 VGA 프레임을 버린 뒤 실제 QVGA 출력을 검증한다.
+  for (int i = 0; i < CLIP_FB_COUNT; ++i) {
+    camera_fb_t* warm = esp_camera_fb_get();
+    if (warm == nullptr) { _lastError = "profile_warmup_failed"; return false; }
+    esp_camera_fb_return(warm);
+  }
+
   // 실제로 적용된 해상도를 한 프레임 받아 확인한다. 여기서 실패하면 배선이나
   // 센서 문제이므로 부팅 단계에서 드러내는 편이 낫다.
   camera_fb_t* probe = esp_camera_fb_get();
   if (probe == nullptr) {
     _cameraOk = false;
     _lastError = "first_frame_failed";
+    return false;
+  }
+  if (probe->width != 320 || probe->height != 240) {
+    esp_camera_fb_return(probe);
+    _lastError = "stable_profile_size_mismatch";
     return false;
   }
   _frameWidth = probe->width;
@@ -102,7 +122,29 @@ bool CameraService::begin() {
   return true;
 }
 
-CaptureResult CameraService::capture(uint32_t timeoutMs) {
+bool CameraService::setProfileLocked(CameraProfile desired) {
+  if (desired == CameraProfile::Current || desired == _profile) return true;
+  if (!_supportsVga && desired != CameraProfile::Stable) { _lastError = "profile_requires_psram"; return false; }
+  sensor_t* sensor = esp_camera_sensor_get();
+  if (sensor == nullptr) { _lastError = "sensor_unavailable"; return false; }
+  const auto next = cameraProfileSpec(desired);
+  const auto old = cameraProfileSpec(_profile);
+  const auto size = desired == CameraProfile::Stable ? FRAMESIZE_QVGA : FRAMESIZE_VGA;
+  if (sensor->set_framesize(sensor, size) != 0 || sensor->set_quality(sensor, next.jpegQuality) != 0) {
+    const auto oldSize = _profile == CameraProfile::Stable ? FRAMESIZE_QVGA : FRAMESIZE_VGA;
+    const bool restoredSize = sensor->set_framesize(sensor, oldSize) == 0;
+    const bool restoredQuality = sensor->set_quality(sensor, old.jpegQuality) == 0;
+    _cameraOk = restoredSize && restoredQuality;
+    _discardFrames = CLIP_FB_COUNT;
+    _lastError = "profile_apply_failed";
+    return false;
+  }
+  _profile = desired;
+  _discardFrames = CLIP_FB_COUNT;
+  return true;
+}
+
+CaptureResult CameraService::capture(uint32_t timeoutMs, CameraProfile desired) {
   CaptureResult result;
   _lastAttemptWasBusy = false;
 
@@ -119,12 +161,35 @@ CaptureResult CameraService::capture(uint32_t timeoutMs) {
     return result;
   }
 
+  if (!setProfileLocked(desired)) {
+    ++_captureErrorCount;
+    xSemaphoreGive(_mutex);
+    return result;
+  }
+  while (_discardFrames > 0) {
+    camera_fb_t* warm = esp_camera_fb_get();
+    if (warm == nullptr) {
+      _lastError = "profile_warmup_failed"; ++_captureErrorCount;
+      xSemaphoreGive(_mutex); return result;
+    }
+    esp_camera_fb_return(warm);
+    --_discardFrames;
+  }
   camera_fb_t* fb = esp_camera_fb_get();
   if (fb == nullptr) {
     _captureErrorCount++;
     xSemaphoreGive(_mutex);
     return result;
   }
+
+  const auto spec = cameraProfileSpec(_profile);
+  if (fb->width != spec.width || fb->height != spec.height) {
+    esp_camera_fb_return(fb);
+    _lastError = "profile_size_mismatch"; ++_captureErrorCount;
+    xSemaphoreGive(_mutex); return result;
+  }
+  _frameWidth = fb->width; _frameHeight = fb->height;
+  _lastError = "";
 
   // framebuffer·획득시각·frameSeq를 같은 임계구역에서 하나로 묶는다.
   // frameSeq는 새 JPEG 획득에 성공했을 때만 증가한다(§9.3).
