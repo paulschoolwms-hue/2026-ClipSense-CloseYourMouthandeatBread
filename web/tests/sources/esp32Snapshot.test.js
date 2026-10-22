@@ -47,3 +47,8 @@ it('shows the proxy diagnosis without dumping request credentials', async () => 
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ message:'ESP32 응답 시간 초과' }), { status:504 })))
   await expect(fetchSnapshot('http://device', 'private-test-value')).rejects.toThrow('ESP32 응답 시간 초과')
 })
+it('본문 수신 오류를 서버 종료나 토큰 오류로 오진하지 않는다', async () => {
+  const r = response(); r.blob = async () => { throw new TypeError('body interrupted') }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(r))
+  await expect(fetchSnapshot('http://device', '')).rejects.toThrow('본문')
+})

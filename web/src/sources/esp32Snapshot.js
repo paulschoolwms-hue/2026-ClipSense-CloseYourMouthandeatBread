@@ -12,9 +12,16 @@ export function captureUrl(address) {
 
 export async function fetchSnapshot(address, token, previous, signal) {
   const start = performance.now()
-  const response = await fetch(`/esp32-proxy?url=${encodeURIComponent(captureUrl(address))}`, {
-    headers: { 'X-Clip-Device-Token': token }, cache: 'no-store', signal,
-  })
+  let response
+  try {
+    response = await fetch(`/esp32-proxy?url=${encodeURIComponent(captureUrl(address))}`, {
+      headers: { 'X-Clip-Device-Token': token }, cache: 'no-store', signal,
+    })
+  } catch (error) {
+    if (signal?.aborted) throw error
+    if (!(error instanceof TypeError)) throw error
+    throw new Error('브라우저에서 맥 중계 요청에 실패했습니다. 같은 맥 브라우저에서 로컬 HTTP 주소를 확인하세요. 이 메시지만으로 서버 종료를 뜻하지는 않습니다.')
+  }
   if ([401, 403].includes(response.status)) throw new Error('ESP32 기기 토큰을 확인해 주세요.')
   if (response.status === 503) throw new Error('ESP32 카메라 촬영 실패 또는 새 프레임 없음')
   if (!response.ok) {
@@ -36,10 +43,14 @@ export async function fetchSnapshot(address, token, previous, signal) {
   const boot = response.headers.get('X-Boot-Id')
   if (!boot || sent < captured) throw new Error('ESP32 프레임 시각 오류')
   if (previous?.boot === boot && (seq <= previous.seq || captured <= previous.captureUs)) throw new Error('ESP32 영상이 정지했거나 이전 프레임입니다.')
-  const blob = await response.blob()
+  let blob
+  try { blob = await response.blob() } catch (error) {
+    if (signal?.aborted) throw error
+    throw new Error('ESP32 사진 본문을 받는 중 연결이 끊겼습니다. 토큰 오류나 웹 서버 종료로 단정할 수 없습니다.')
+  }
   const ageMs = performance.now() - start + (sent - captured) / 1000
   if (ageMs > 2000) throw new Error('ESP32 영상이 오래되었습니다.')
-  const bytes = new Uint8Array(await blob.slice(0, 2).arrayBuffer())
+  const bytes = new Uint8Array(await new Response(blob.slice(0, 2)).arrayBuffer())
   if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error('ESP32 응답이 JPEG 사진이 아닙니다.')
   return { blob, seq, boot, captureUs: captured, requestMs: performance.now() - start,
     receivedAt: Date.now(), sensor: response.headers.get('X-Camera-Sensor') ?? 'unknown',

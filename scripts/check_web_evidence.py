@@ -17,6 +17,8 @@ with sync_playwright() as p:
     browser = p.chromium.launch(**({'executable_path': executable} if executable else {}))
     page = browser.new_page()
     page.add_init_script('''
+      // 구형 Safari의 API 가용성을 재현한다.
+      AbortSignal.any = undefined; AbortSignal.timeout = undefined;
       window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
       Object.defineProperty(window, 'speechSynthesis', { configurable:true, value: {
         cancel() {}, speak(u) { setTimeout(() => u.onstart?.(), 0); setTimeout(() => u.onend?.(), 20); }
