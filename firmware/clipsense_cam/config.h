@@ -7,7 +7,7 @@
 #pragma once
 
 // ── 펌웨어 식별 ────────────────────────────────────────────────────────────
-#define CLIP_FIRMWARE_VERSION "0.3.2"
+#define CLIP_FIRMWARE_VERSION "0.3.3"
 #define CLIP_API_SCHEMA_VERSION "clipsense-camera-api-v1"
 
 // 기기 식별자. 여러 대를 같은 망에 둘 때 기기마다 다르게 준다.

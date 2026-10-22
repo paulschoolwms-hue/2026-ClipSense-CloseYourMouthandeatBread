@@ -29,6 +29,7 @@ class HttpApi {
   void loop();
 
  private:
+  void sendJpegBody(const uint8_t* data, size_t length);
   void handleRoot();
   void handleHealth();
   void handleCapture();
@@ -48,6 +49,12 @@ class HttpApi {
   // 토큰이 맞으면 true. 틀리면 401/403을 직접 보내고 false를 돌려준다.
   bool authorize();
 
+  size_t _lastTransferExpected = 0;
+  size_t _lastTransferQueued = 0;
+  uint32_t _lastTransferMs = 0;
+  uint32_t _transferErrorCount = 0;
+  bool _lastTransferComplete = false;
+  int _lastTransferRssi = 0;
   WebServer _server;
   CameraService& _camera;
   ClipNetwork& _net;

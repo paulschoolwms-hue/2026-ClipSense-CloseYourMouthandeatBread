@@ -3,6 +3,7 @@
 #include <esp_system.h>
 
 #include "config.h"
+#include "jpeg_transfer.h"
 
 extern void clipSignalCaptureLed();  // main .ino — 촬영 표시 LED
 
@@ -175,10 +176,34 @@ void HttpApi::handleHealth() {
   json += "\"minFreeHeapBytes\":" + String(ESP.getMinFreeHeap()) + ",";
   json += "\"resetReason\":\"" + String(resetReasonName()) + "\",";
   json += "\"lastError\":\"" + String(_camera.lastError()) + "\"";
+  json += ",\"lastTransfer\":{\"expectedBytes\":" + String(_lastTransferExpected);
+  json += ",\"queuedBytes\":" + String(_lastTransferQueued);
+  json += ",\"elapsedMs\":" + String(_lastTransferMs);
+  json += ",\"completeQueue\":" + String(_lastTransferComplete ? "true" : "false");
+  json += ",\"errorCount\":" + String(_transferErrorCount);
+  json += ",\"rssiDbm\":" + String(_lastTransferRssi) + "}";
   json += "}";
 
   applyCommonHeaders(false);
   _server.send(200, "application/json", json);
+}
+
+void HttpApi::sendJpegBody(const uint8_t* data, size_t length) {
+  auto client = _server.client();
+  client.setNoDelay(true);
+  client.setConnectionTimeout(500);
+  _lastTransferExpected = length;
+  _lastTransferRssi = _net.rssiDbm();
+  const auto result = writeJpegBody(client, data, length,
+                                   []() { return millis(); }, []() { delay(1); });
+  _lastTransferQueued = result.queuedBytes;
+  _lastTransferMs = result.elapsedMs;
+  _lastTransferComplete = result.complete;
+  if (!result.complete) {
+    ++_transferErrorCount;
+    // 헤더의 Content-Length와 다른 불완전한 응답을 열린 채 남기지 않는다.
+    client.stop();
+  }
 }
 
 void HttpApi::handleCapture() {
@@ -218,7 +243,7 @@ void HttpApi::handleCapture() {
 
   _server.setContentLength(shot.fb->len);
   _server.send(200, "image/jpeg", "");
-  _server.sendContent(reinterpret_cast<const char*>(shot.fb->buf), shot.fb->len);
+  sendJpegBody(shot.fb->buf, shot.fb->len);
 
   _camera.release(shot);
   _frameSourceName = "camera";
@@ -311,7 +336,7 @@ bool HttpApi::sendRelayFrame() {
   _server.sendHeader("X-Frame-Source", "laptop-upload");
   _server.setContentLength(_relayLen);
   _server.send(200, "image/jpeg", "");
-  _server.sendContent(reinterpret_cast<const char*>(_relayBuf), _relayLen);
+  sendJpegBody(_relayBuf, _relayLen);
   _frameSourceName = "laptop-upload";
   return true;
 #else

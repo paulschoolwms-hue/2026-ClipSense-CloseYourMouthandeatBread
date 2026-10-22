@@ -316,3 +316,23 @@ QVGA(320×240)/quality 12를 기본값으로 복귀해 전송량을 줄여 비�
 채팅에 복사하지 않는다. HTTP 상태, Content-Length와 실제 바이트 수, 경과 시간,
 JPEG 시작/끝 여부를 확인한다. 전체 수신과 JPEG 표식이 맞을 때만 완료로 보고한다.
 이것은 JPEG 디코더 검증이나 웹 연속 갱신/소리 증거를 대신하지 않는다.
+
+## 소량 전송·진단 보완 (0.3.3)
+
+같은 맥/WMS 측정에서 JPEG의 선언 길이는 바뀌어도 2872바이트에서 반복 중단되는 현상이 관찰됐다.
+원인이 펌웨어/네트워크/드라이버 중 무엇인지는 아직 확정되지 않았다.
+0.3.3은 한 번의 큰 `sendContent` 호출 대신 내부 RAM의 512바이트 블록으로 원본 JPEG을 복사해
+소켓에 쓰고, 부분 write를 이어서 처리하며 각 블록 사이에 스케줄러에 양보한다.
+프레임버퍼는 전체 쓰기 시도가 끝날 때까지 유지하며, 실패한 응답 연결은 닫는다.
+인증·프레임 번호·보수적 신선도·JPEG 원본은 유지한다.
+
+인증된 `/health`에 선택적인 `lastTransfer` 진단을 추가한다:
+`expectedBytes`, `queuedBytes`, `elapsedMs`, `completeQueue`, `errorCount`, `rssiDbm`.
+queuedBytes/completeQueue는 **소켓이 받아들인 양**일 뿐 맥의 최종 수신/ACK를 증명하지 않는다.
+`probe_clip_snapshot.py`는 측정 후 이 상태도 출력한다. 토큰은 출력하지 않는다.
+시리얼을 반복 출력하지 않아 USB 로그를 읽지 않을 때의 부가적인 블로킹을 피한다.
+
+`python3 scripts/test_jpeg_transfer.py`로 호스트에서 부분 write/바이트 보존/중단을 검사한다.
+ESP32 라이브러리 3.3.12의 공식 NetworkClient API를 사용하지만, 이 클라우드의 호스트 테스트는
+실제 ESP32 스케치 컴파일·업로드·Wi-Fi 검증을 대신하지 않는다. 보드에서 재측정이 필요하다.
+2초 예산은 소켓 write 사이에서 검사하며 write 내부를 강제 종료하는 hard timeout은 아니다.

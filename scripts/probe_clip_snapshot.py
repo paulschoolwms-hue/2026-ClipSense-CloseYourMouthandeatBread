@@ -1,6 +1,7 @@
 """맥에서 실제 ESP32 JPEG의 수신 완료 여부 측정. 토큰을 출력하지 않는다."""
 import argparse
 import http.client
+import json
 from pathlib import Path
 import re
 import socket
@@ -26,6 +27,22 @@ def main():
     if not match or not match.group(1):
         print('secrets.h의 CLIP_DEVICE_TOKEN 따옴표 값을 확인하세요. 값은 출력하지 않습니다.')
         return 1
+    def report_device_status():
+        health = http.client.HTTPConnection(target.hostname, target.port or 80, timeout=3)
+        try:
+            health.request('GET', '/health', headers={'X-Clip-Device-Token': match.group(1)})
+            result = health.getresponse()
+            if result.status != 200:
+                print('상태 진단 HTTP:', result.status)
+                return
+            info = json.loads(result.read(8192))
+            print('기기 상태:', json.dumps({key: info.get(key) for key in
+                ('firmwareVersion', 'networkMode', 'rssiDbm', 'resolution', 'lastTransfer')}, ensure_ascii=False))
+        except (OSError, http.client.HTTPException, ValueError):
+            print('추가 기기 상태 응답 없음')
+        finally:
+            health.close()
+
     connection = http.client.HTTPConnection(target.hostname, target.port or 80, timeout=3)
     started = time.monotonic()
     data = bytearray()
@@ -56,6 +73,7 @@ def main():
     finally:
         connection.close()
         print(f'경과 시간: {time.monotonic() - started:.3f}초 / 실제 수신: {len(data)}바이트')
+        report_device_status()
     if response is None:
         print(problem or 'HTTP 응답 없음')
         return 1
