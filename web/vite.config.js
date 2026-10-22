@@ -71,11 +71,12 @@ try { revision = execFileSync('git', ['describe', '--always', '--dirty'], { enco
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  const localHttp = env.CLIPSENSE_HTTP_LOCAL === '1'
   return {
     define: { __APP_REVISION__: JSON.stringify(revision) },
     plugins: [
       react(),
-      basicSsl(), // dev HTTPS — 폰에서 getUserMedia는 secure context 필요 (스펙 §W1.1)
+      ...(localHttp ? [] : [basicSsl()]), // HTTP는 아래에서 loopback에만 바인딩한다.
       citsMockPlugin(),
       esp32ProxyPlugin(),
       VitePWA({
@@ -90,8 +91,9 @@ export default defineConfig(({ mode }) => {
         },
       }),
     ],
+    preview: { host: localHttp ? '127.0.0.1' : true },
     server: {
-      host: true, // 핫스팟 상의 폰에서 접속 가능하도록 0.0.0.0 바인딩
+      host: localHttp ? '127.0.0.1' : true, // 로컬 HTTP를 외부 네트워크에 공개하지 않는다.
       proxy: {
         // '/cits?...' → CITS_TARGET '?...&serviceKey=...' (키는 서버측 은닉)
         '/cits': {
