@@ -32,7 +32,7 @@ with sync_playwright() as p:
         data = page.evaluate('''color => {
           const c=document.createElement('canvas'); c.width=640; c.height=480;
           const x=c.getContext('2d'); x.fillStyle='#808080'; x.fillRect(0,0,640,480);
-          x.fillStyle=color; x.beginPath(); x.arc(320,100,48,0,Math.PI*2); x.fill();
+          x.fillStyle=color; x.beginPath(); x.arc(320,380,48,0,Math.PI*2); x.fill();
           return c.toDataURL('image/jpeg').split(',')[1];
         }''', css)
         frames[color] = base64.b64decode(data)
@@ -57,6 +57,7 @@ with sync_playwright() as p:
     page.get_by_label('ESP32 기기 토큰').fill('browser-test-only-token')
     page.get_by_role('button', name='ESP32 연결', exact=True).click()
     expect(page.get_by_test_id('connection-state')).to_have_text('새 사진 수신 중')
+    assert page.locator('.camera-view img').evaluate("el => getComputedStyle(el).transform") == 'matrix(-1, 0, 0, -1, 0, 0)'
     panel = page.locator('.evidence-panel')
     page.get_by_role('button', name='음성 시작 (현재 안내 읽기)').click()
     expect(page.get_by_test_id('speech-state')).to_contain_text('브라우저 발화 종료')
@@ -86,6 +87,7 @@ with sync_playwright() as p:
     assert 'browser-test-only-token' not in json.dumps(data)
     assert data['realSignalApiConnected'] is False
     assert len(data['rows']) == 3
+    assert all(r['device']['rotationDeg'] == 180 for r in data['rows'])
     assert all(r['final']['decision'] == 'WAIT' and r['heard'] == '미확인' for r in data['rows'])
     assert [r['vision']['color'] for r in data['rows']] == ['red', 'green', 'unknown']
     assert any(e['type'] == 'manual_fault' for e in data['events'])
@@ -97,8 +99,15 @@ with sync_playwright() as p:
     page.get_by_role('button', name='ESP32 연결', exact=True).click()
     expect(page.get_by_test_id('connection-state')).to_have_text('새 사진 수신 중')
     expect(panel).to_contain_text('SIM 시뮬레이터 (실촬영 아님)')
-    with page.expect_download() as download:
-        page.get_by_role('button', name='현재 원본 JPEG 저장').click()
+    try:
+        with page.expect_download(timeout=5000) as download:
+            page.get_by_role('button', name='현재 원본 JPEG 저장').click()
+    except Exception:
+        print('JPEG download diagnostics:',
+            page.get_by_test_id('connection-state').inner_text(),
+            page.get_by_test_id('last-success').inner_text(),
+            page.get_by_test_id('success-count').inner_text(), 'requests=', state['seq'], 'errors=', errors)
+        raise
     assert open(download.value.path(), 'rb').read()[:2] == b'\xff\xd8'
     assert state['mock_requests'] == 0
     assert not errors, errors

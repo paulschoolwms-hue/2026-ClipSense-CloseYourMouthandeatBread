@@ -73,6 +73,7 @@ export default function EvidencePanel({ liveMode, status, vision, decision, spee
       <dt>기기 프레임 / 부팅 ID</dt><dd>{status?.seq ?? '—'} / {status?.boot ?? '—'}</dd>
       <dt>실제 입력 출처</dt><dd>{status?.inputKind === 'BUILTIN' ? '맥/내장 카메라 (클립 증거 아님)' : status?.sensor === 'SIM' ? 'SIM 시뮬레이터 (실촬영 아님)' : status?.frameSource === 'laptop-upload' ? '노트북 중계 (클립 실촬영 아님)' : status?.lastSuccessAt ? `ESP32 · ${status.sensor}` : '아직 확인되지 않음'}</dd>
       <dt>원본 / 펌웨어 / 요청 시간</dt><dd>{status?.width ?? '—'}×{status?.height ?? '—'} / {status?.firmware ?? '—'} / {Number.isFinite(status?.requestMs) ? `${Math.round(status.requestMs)}ms` : '—'}</dd>
+      <dt>영상 회전</dt><dd>{status?.rotationDeg ?? 0}도 · 원본 JPEG 저장 파일은 회전 전 원본</dd>
       <dt>판독 / 최종 안내</dt><dd data-testid="final-guidance">{liveMode ? `${COLORS[vision?.color ?? 'unknown']} / 대기 · ${decision?.message ?? '카메라 영상을 기다리고 있습니다. 대기하세요.'}` : '모의 시나리오 — 실제 클립 결과와 구분하세요.'}</dd>
     </dl>
     <p>규칙 {DETECTOR_CONFIG.version} · 코드 {REVISION} · HSV 색상 + 연결 영역의 크기/종횡비/채움 검사. 학습 AI·보행자 모양 분류가 아닙니다.</p>

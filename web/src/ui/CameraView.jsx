@@ -132,7 +132,7 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, onVis
         if (cancelled) return
         if (performance.now() - shot.capturedAtMonoMs > 2000) throw new Error('ESP32 영상이 오래되었습니다.')
         stage = '픽셀 분석'
-        const frame = grabFrame(image, canvasRef.current)
+        const frame = grabFrame(image, canvasRef.current, 180)
         if (!frame) throw new Error('ESP32 JPEG 영상을 읽을 수 없습니다.')
         previous = shot
         failures = 0
@@ -142,7 +142,7 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, onVis
         status = { state: 'connected', inputKind: 'ESP32', successCount: status.successCount + 1,
           lastSuccessAt: shot.receivedAt, seq: shot.seq, boot: shot.boot, captureUs: shot.captureUs,
           sensor: shot.sensor, frameSource: shot.frameSource, firmware: shot.firmware,
-          width: image.naturalWidth, height: image.naturalHeight, requestMs: shot.requestMs }
+          width: image.naturalWidth, height: image.naturalHeight, requestMs: shot.requestMs, rotationDeg: 180 }
         onStatusRef.current?.(status)
         onVisionRef.current({ ...base, frameSeq: ++frameSeqRef.current,
           capturedAtMonoMs: shot.capturedAtMonoMs, quality: computeQuality(frame), frameAvailable: true, blob: shot.blob,
@@ -195,7 +195,7 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, onVis
   return (
     <div className="camera-view">
       {mode === 'camera' ? <video ref={videoRef} muted playsInline autoPlay aria-label="신호등 인식 카메라" /> :
-        <img ref={imgRef} alt="ESP32 카메라 영상" />}
+        <img ref={imgRef} style={{ transform: 'rotate(180deg)' }} alt="ESP32 카메라 영상 (180도 회전)" />}
       <div className="region-line" style={{ top: `${REGION_RATIO * 100}%` }} />
       <span className="region-label">↑ 신호등 분석 영역</span>
       <div className={`camera-result camera-result-${result?.color ?? 'unknown'}`} role="status" aria-live="polite">

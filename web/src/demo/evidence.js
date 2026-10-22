@@ -28,7 +28,7 @@ export function evidenceRow({ status, vision, decision, expected, sceneKind, hea
   return { recordedAt: new Date(nowEpochMs).toISOString(), expected, sceneKind,
     heard: heard ?? '미확인', source: status.sensor === 'SIM' ? 'SIMULATOR' : status.frameSource === 'laptop-upload' ? 'LAPTOP_RELAY' : ['OV2640', 'OV3660', 'OV5640'].includes(status.sensor) ? 'ESP32_CAMERA' : 'UNVERIFIED_SOURCE',
     device: { bootId: status.boot, frameSeq: status.seq, captureUptimeUs: status.captureUs,
-      sensor: status.sensor, firmware: status.firmware, width: status.width, height: status.height },
+      sensor: status.sensor, firmware: status.firmware, width: status.width, height: status.height, rotationDeg: status.rotationDeg ?? 0 },
     receivedAt: new Date(status.lastSuccessAt).toISOString(),
     vision: { color: vision?.color ?? 'unknown', score: vision?.score ?? 0, quality: vision?.quality ?? 0,
       ageMs: nowMonoMs - (vision?.capturedAtMonoMs ?? nowMonoMs) },

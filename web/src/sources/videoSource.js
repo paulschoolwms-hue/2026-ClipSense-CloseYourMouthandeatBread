@@ -39,7 +39,7 @@ export function stopStream(stream) {
 const TARGET_W = 320 // 분석용 다운스케일 폭 — 320이면 HSV 스캔이 60fps에도 여유
 
 /** video/img 요소의 현재 프레임을 축소해 ImageData로 반환. 준비 안 됐으면 null. */
-export function grabFrame(el, canvas) {
+export function grabFrame(el, canvas, rotationDeg = 0) {
   const srcW = el.videoWidth ?? el.naturalWidth ?? 0
   const srcH = el.videoHeight ?? el.naturalHeight ?? 0
   if (!srcW || !srcH) return null
@@ -50,6 +50,11 @@ export function grabFrame(el, canvas) {
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
   if (!ctx) return null
   try {
+    // CSS 미리보기와 동일하게 회전한 픽셀을 분석한다. 분석 영역은 회전 후 상단이다.
+    if (rotationDeg === 180) {
+      ctx.translate(w, h)
+      ctx.rotate(Math.PI)
+    }
     ctx.drawImage(el, 0, 0, w, h)
     return ctx.getImageData(0, 0, w, h)
   } catch {
