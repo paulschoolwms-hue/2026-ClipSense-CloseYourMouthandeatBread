@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { captureUrl, fetchSnapshot } from '../../src/sources/esp32Snapshot.js'
+import { captureUrl, estimateFrameAgeMs, fetchSnapshot, nextPollDelay } from '../../src/sources/esp32Snapshot.js'
 afterEach(() => vi.unstubAllGlobals())
 function response(status = 200, headers = {}) {
   return new Response(new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])]), { status, headers: {
@@ -28,7 +28,7 @@ it('rejects auth failures, stale captures and missing proxy', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(401)))
   await expect(fetchSnapshot('http://device', '')).rejects.toThrow('토큰')
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, { 'X-Response-Uptime-Us': '3000000' })))
-  await expect(fetchSnapshot('http://device', '')).rejects.toThrow('오래')
+  await expect(fetchSnapshot('http://device', '')).rejects.toThrow('늦어')
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, { 'Content-Type': 'text/html' })))
   await expect(fetchSnapshot('http://device', '')).rejects.toThrow('중계 서버')
 })
@@ -77,4 +77,19 @@ it('marks auth and unsupported PSRAM errors as permanent to stop automatic retri
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(status)))
     await expect(fetchSnapshot('http://device', '')).rejects.toMatchObject({ permanent: true })
   }
+})
+
+it('counts only capture-to-send and body transfer as frame age', () => {
+  expect(estimateFrameAgeMs(1_000_000, 1_020_000, 40)).toBe(160)
+  expect(estimateFrameAgeMs(2_000_000, 1_000_000, 10)).toBe(Infinity)
+  // A long wait before capture is intentionally absent from this calculation.
+  expect(estimateFrameAgeMs(9_000_000, 9_020_000, 40)).toBe(160)
+})
+
+it('paces stable frames faster on a good link and backs off weak or failed links', () => {
+  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, profile: 'stable' })).toBe(160)
+  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, profile: 'detail' })).toBe(260)
+  expect(nextPollDelay({ requestMs: 40, rssiDbm: -82, profile: 'stable' })).toBe(700)
+  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, failures: 1 })).toBe(350)
+  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, failures: 4 })).toBe(2500)
 })

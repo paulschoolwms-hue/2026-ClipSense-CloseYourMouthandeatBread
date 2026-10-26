@@ -1,4 +1,25 @@
 /** ClipSense 펌웨어의 인증된 JPEG 스냅샷. 토큰은 URL에 넣지 않는다. */
+export const MAX_FRAME_AGE_MS = 2000
+
+// 요청을 보낸 뒤 ESP32가 카메라 mutex를 기다린 시간은 프레임 나이가 아니다.
+// 펌웨어가 기록한 촬영→응답 시간과 실제 JPEG 본문 수신 시간만 합산한다.
+// 브라우저/중계 헤더 전달 시간을 직접 잴 수 없어 100ms를 보수적으로 더한다.
+export function estimateFrameAgeMs(capturedUs, sentUs, bodyMs) {
+  if (![capturedUs, sentUs, bodyMs].every(Number.isFinite) || sentUs < capturedUs || bodyMs < 0) {
+    return Infinity
+  }
+  return (sentUs - capturedUs) / 1000 + bodyMs + 100
+}
+
+export function nextPollDelay({ requestMs, rssiDbm, profile = 'stable', failures = 0 }) {
+  if (failures > 0) return Math.min(2500, 350 * 2 ** Math.min(failures - 1, 3))
+  if (rssiDbm != null && rssiDbm <= -80) return 700
+  if (requestMs >= 1000) return 700
+  if ((rssiDbm != null && rssiDbm <= -75) || requestMs >= 500) return 400
+  if (requestMs >= 250) return 260
+  return profile === 'stable' ? 160 : 260
+}
+
 export function captureUrl(address, profile) {
   let url
   try { url = new URL(address) } catch {
@@ -34,6 +55,7 @@ export async function fetchSnapshot(address, token, previous, signal, profile) {
     if (!(error instanceof TypeError)) throw error
     throw new Error('브라우저에서 맥 중계 요청에 실패했습니다. 같은 맥 브라우저에서 로컬 HTTP 주소를 확인하세요. 이 메시지만으로 서버 종료를 뜻하지는 않습니다.')
   }
+  const headersReceivedAt = performance.now()
   if ([401, 403, 422].includes(response.status)) {
     const error = new Error(response.status === 422 ? '이 기기는 고화질용 PSRAM을 지원하지 않습니다. 안정 화질로 연결하세요.' : 'ESP32 기기 토큰을 확인해 주세요.')
     error.permanent = true
@@ -64,8 +86,9 @@ export async function fetchSnapshot(address, token, previous, signal, profile) {
     if (signal?.aborted) throw error
     throw new Error('ESP32 사진 본문을 받는 중 연결이 끊겼습니다. 토큰 오류나 웹 서버 종료로 단정할 수 없습니다.')
   }
-  const ageMs = performance.now() - start + (sent - captured) / 1000
-  if (ageMs > 2000) throw new Error('ESP32 영상이 오래되었습니다.')
+  const bodyReceivedAt = performance.now()
+  const ageMs = estimateFrameAgeMs(captured, sent, bodyReceivedAt - headersReceivedAt)
+  if (ageMs > MAX_FRAME_AGE_MS) throw new Error('ESP32 사진 전송이 늦어 새 프레임을 다시 요청합니다.')
   const expected = response.headers.get('content-length')
   if (blob.size > 4 * 1024 * 1024 || (expected != null && (!/^\d+$/.test(expected) || Number(expected) !== blob.size))) {
     throw new Error('ESP32 사진 길이가 맞지 않습니다. 사진 전송이 완료되지 않았습니다.')
@@ -81,6 +104,7 @@ export async function fetchSnapshot(address, token, previous, signal, profile) {
     throw error
   }
   return { blob, seq, boot, captureUs: captured, requestMs: performance.now() - start,
+    frameAgeMs: ageMs,
     profile: actualProfile ?? 'unknown',
     jpegQuality: response.headers.get('X-Jpeg-Quality'),
     rssiDbm: /^-?\d+$/.test(response.headers.get('X-Wifi-Rssi') ?? '') ? Number(response.headers.get('X-Wifi-Rssi')) : null,

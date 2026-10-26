@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { analyzeFrame, REGION_RATIO } from '../vision/signalDetector.js'
 import { startCamera, stopStream, grabFrame, cameraErrorMessage } from '../sources/videoSource.js'
 
-import { fetchSnapshot } from '../sources/esp32Snapshot.js'
+import { fetchSnapshot, MAX_FRAME_AGE_MS, nextPollDelay } from '../sources/esp32Snapshot.js'
 import { requestDeadline } from '../sources/requestDeadline.js'
 
 const ANALYZE_MS = 300
+const ESP32_REQUEST_TIMEOUT_MS = 3500
 const STEP = 4 // 다운샘플 간격(px) — quality 산식은 analyzeFrame과 별개로 독립 계산
 
 /**
@@ -106,6 +107,7 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, espPr
   useEffect(() => {
     if (mode !== 'esp32') return undefined
     let cancelled = false, timer, previous = null, objectUrl = null, failures = 0
+    let lastAcceptedAt = null, smoothedIntervalMs = null
     let activeProfile = espProfile, fallbackReason = '', stopped = false
     let status = { state: espUrl ? 'connecting' : 'idle', inputKind: 'ESP32', successCount: 0, lastSuccessAt: null }
     const controller = new AbortController()
@@ -117,7 +119,7 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, espPr
     if (imgRef.current) imgRef.current.removeAttribute('src')
     if (!espUrl) return undefined
     const poll = async () => {
-      const deadline = requestDeadline(controller.signal, 6500)
+      const deadline = requestDeadline(controller.signal, ESP32_REQUEST_TIMEOUT_MS)
       let stage = '사진 요청'
       try {
         const shot = await fetchSnapshot(espUrl, espToken, previous,
@@ -131,20 +133,29 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, espPr
         image.src = objectUrl
         await image.decode()
         if (cancelled) return
-        if (performance.now() - shot.capturedAtMonoMs > 2000) throw new Error('ESP32 영상이 오래되었습니다.')
+        if (performance.now() - shot.capturedAtMonoMs > MAX_FRAME_AGE_MS) {
+          throw new Error('ESP32 사진 해석이 늦어 새 프레임을 다시 요청합니다.')
+        }
         stage = '픽셀 분석'
         const frame = grabFrame(image, canvasRef.current, 180)
         if (!frame) throw new Error('ESP32 JPEG 영상을 읽을 수 없습니다.')
         previous = shot
         failures = 0
-        lastFrameAtRef.current = performance.now()
+        const acceptedAt = performance.now()
+        if (lastAcceptedAt != null) {
+          const interval = acceptedAt - lastAcceptedAt
+          smoothedIntervalMs = smoothedIntervalMs == null ? interval : smoothedIntervalMs * 0.75 + interval * 0.25
+        }
+        lastAcceptedAt = acceptedAt
+        lastFrameAtRef.current = acceptedAt
         const base = analyzeFrame(frame)
         setResult(base); setError(null)
         status = { state: 'connected', inputKind: 'ESP32', successCount: status.successCount + 1,
           lastSuccessAt: shot.receivedAt, seq: shot.seq, boot: shot.boot, captureUs: shot.captureUs,
           sensor: shot.sensor, frameSource: shot.frameSource, firmware: shot.firmware,
           width: image.naturalWidth, height: image.naturalHeight, requestMs: shot.requestMs, rotationDeg: 180,
-          profile: shot.profile, requestedProfile: espProfile, jpegQuality: shot.jpegQuality, rssiDbm: shot.rssiDbm, fallbackReason }
+          profile: shot.profile, requestedProfile: espProfile, jpegQuality: shot.jpegQuality, rssiDbm: shot.rssiDbm,
+          frameAgeMs: shot.frameAgeMs, fps: smoothedIntervalMs ? 1000 / smoothedIntervalMs : null, fallbackReason }
         onStatusRef.current?.(status)
         onVisionRef.current({ ...base, frameSeq: ++frameSeqRef.current,
           capturedAtMonoMs: shot.capturedAtMonoMs, quality: computeQuality(frame), frameAvailable: true, blob: shot.blob,
@@ -159,15 +170,19 @@ export default function CameraView({ mode, espUrl, espToken, connectionId, espPr
         }
         const message = deadline.timedOut || e.name === 'TimeoutError' ? 'ESP32 응답 시간 초과. 같은 Wi-Fi와 기기 IP를 확인하세요.' :
           e instanceof TypeError ? `${stage} 브라우저 처리 오류 (${e.name}). 브라우저를 최신 버전으로 업데이트하고 다시 연결하세요.` : e.message
-        setResult(null); setError(message)
-        status = { ...status, state: 'error', error: message, errorStage: stage }
+        // 한 번의 지연으로 화면 전체를 오류로 덮지 않는다. 두 번 연속 실패하면
+        // 명확한 오류로 바꾸고, 그 전에는 새 프레임을 즉시 다시 요청한다.
+        setResult(null); setError(failures >= 2 || stopped ? message : null)
+        status = { ...status, state: failures >= 2 || stopped ? 'error' : 'connecting', error: message, errorStage: stage }
         onStatusRef.current?.(status)
         // 실패는 새 프레임이 아니다. 마지막 성공 시간/기기 seq/성공 횟수를 유지한다.
         onVisionRef.current({ color: 'unknown', confidence: 0, quality: 0, frameAvailable: false,
           frameSeq: frameSeqRef.current, capturedAtMonoMs: previous?.capturedAtMonoMs ?? performance.now() - 5000 })
       } finally {
         deadline.dispose()
-        if (!cancelled && !stopped) timer = setTimeout(poll, failures ? Math.min(3000, 500 * 2 ** Math.min(failures, 3)) : ANALYZE_MS)
+        if (!cancelled && !stopped) timer = setTimeout(poll, nextPollDelay({
+          requestMs: status.requestMs ?? Infinity, rssiDbm: status.rssiDbm, profile: activeProfile, failures,
+        }))
       }
     }
     poll()
