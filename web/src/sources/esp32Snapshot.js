@@ -12,12 +12,12 @@ export function estimateFrameAgeMs(capturedUs, sentUs, bodyMs) {
 }
 
 export function nextPollDelay({ requestMs, rssiDbm, profile = 'stable', failures = 0 }) {
-  if (failures > 0) return Math.min(2500, 350 * 2 ** Math.min(failures - 1, 3))
-  if (rssiDbm != null && rssiDbm <= -80) return 700
+  if (failures > 0) return Math.min(2500, 250 * 2 ** Math.min(failures - 1, 4))
+  if (rssiDbm != null && rssiDbm <= -82) return 700
   if (requestMs >= 1000) return 700
-  if ((rssiDbm != null && rssiDbm <= -75) || requestMs >= 500) return 400
-  if (requestMs >= 250) return 260
-  return profile === 'stable' ? 160 : 260
+  if ((rssiDbm != null && rssiDbm <= -78) || requestMs >= 500) return 450
+  if ((rssiDbm != null && rssiDbm <= -75) || requestMs >= 250) return 260
+  return profile === 'stable' ? 80 : 160
 }
 
 export function captureUrl(address, profile) {

@@ -39,6 +39,20 @@ describe('analyzeFrame', () => {
     const f = makeFrame(100, 100, GRAY, [{ x: 40, y: 10, w: 20, h: 20, rgb: RED }])
     expect(analyzeFrame(f).color).toBe('red')
   })
+  it('멀리 있는 작은 신호 후보와 어두운 신호색도 검출한다', () => {
+    const smallGreen = makeFrame(100, 100, GRAY, [{ x: 46, y: 10, w: 6, h: 6, rgb: GREEN }])
+    const dimGreen = makeFrame(100, 100, GRAY, [{ x: 40, y: 10, w: 16, h: 16, rgb: [15, 75, 35] }])
+    const warmRed = makeFrame(100, 100, GRAY, [{ x: 40, y: 10, w: 16, h: 16, rgb: [230, 105, 35] }])
+    expect(analyzeFrame(smallGreen).color).toBe('green')
+    expect(analyzeFrame(dimGreen).color).toBe('green')
+    expect(analyzeFrame(warmRed).color).toBe('red')
+  })
+  it('노랑과 파랑은 빨강·초록으로 오인하지 않는다', () => {
+    const yellow = makeFrame(100, 100, GRAY, [{ x: 40, y: 10, w: 20, h: 20, rgb: [230, 200, 20] }])
+    const blue = makeFrame(100, 100, GRAY, [{ x: 40, y: 10, w: 20, h: 20, rgb: [20, 80, 230] }])
+    expect(analyzeFrame(yellow).color).toBe('unknown')
+    expect(analyzeFrame(blue).color).toBe('unknown')
+  })
   it('무채색 화면 → unknown, confidence 0', () => {
     const r = analyzeFrame(makeFrame(100, 100, GRAY))
     expect(r.color).toBe('unknown')

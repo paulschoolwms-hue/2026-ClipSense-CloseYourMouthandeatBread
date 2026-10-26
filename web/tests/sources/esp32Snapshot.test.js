@@ -87,9 +87,9 @@ it('counts only capture-to-send and body transfer as frame age', () => {
 })
 
 it('paces stable frames faster on a good link and backs off weak or failed links', () => {
-  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, profile: 'stable' })).toBe(160)
-  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, profile: 'detail' })).toBe(260)
+  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, profile: 'stable' })).toBe(80)
+  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, profile: 'detail' })).toBe(160)
   expect(nextPollDelay({ requestMs: 40, rssiDbm: -82, profile: 'stable' })).toBe(700)
-  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, failures: 1 })).toBe(350)
-  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, failures: 4 })).toBe(2500)
+  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, failures: 1 })).toBe(250)
+  expect(nextPollDelay({ requestMs: 40, rssiDbm: -72, failures: 4 })).toBe(2000)
 })

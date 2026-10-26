@@ -1,9 +1,9 @@
 // 버전 고정 색상·연결 영역 규칙. 학습 모델이나 보행자 모양 분류기가 아니다.
-export const DETECTOR_CONFIG = Object.freeze({ version: 'hsv-components-v2', regionRatio: 0.6,
-  sampleStep: 2, minRatio: 0.003, fullRatio: 0.03, minPixels: 5,
+export const DETECTOR_CONFIG = Object.freeze({ version: 'hsv-components-v3', regionRatio: 0.6,
+  sampleStep: 2, minRatio: 0.0012, fullRatio: 0.025, minPixels: 4,
   maxRatio: 0.35, minAspect: 0.15, maxAspect: 2.5, minFill: 0.15,
-  redHueMax: 20, redHueMin: 340, greenHueMin: 100, greenHueMax: 200,
-  minSaturation: 0.35, minBrightness: 0.35 })
+  redHueMax: 28, redHueMin: 338, greenHueMin: 75, greenHueMax: 195,
+  minSaturation: 0.3, minBrightness: 0.25 })
 export const REGION_RATIO = DETECTOR_CONFIG.regionRatio
 
 export function rgbToHsv(r, g, b) {
@@ -19,7 +19,7 @@ export function rgbToHsv(r, g, b) {
   return { h, s: max === 0 ? 0 : d / max, v: max }
 }
 
-/** 색 마스크의 4방향 연결 영역에서 흩어진 잡음·큰 면·극단적으로 가는 영역을 제외한다. */
+/** 색 마스크의 8방향 연결 영역에서 흩어진 잡음·큰 면·극단적으로 가는 영역을 제외한다. */
 function largestCandidate(mask, width, height, color) {
   const cfg = DETECTOR_CONFIG
   let best = null
@@ -37,6 +37,10 @@ function largestCandidate(mask, width, height, color) {
       if (x + 1 < width) neighbors.push(p + 1)
       if (y > 0) neighbors.push(p - width)
       if (y + 1 < height) neighbors.push(p + width)
+      if (x > 0 && y > 0) neighbors.push(p - width - 1)
+      if (x + 1 < width && y > 0) neighbors.push(p - width + 1)
+      if (x > 0 && y + 1 < height) neighbors.push(p + width - 1)
+      if (x + 1 < width && y + 1 < height) neighbors.push(p + width + 1)
       for (const n of neighbors) if (!visited[n] && mask[n] === color) { visited[n] = 1; stack.push(n) }
     }
     const w = maxX - minX + 1, h = maxY - minY + 1
